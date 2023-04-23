@@ -3,6 +3,7 @@ import * as utils from '../utils.js';
 const { PI, abs, min, max, sign, ceil, floor, log2, log10 } = Math;
 const { $, clamp, dcheck } = utils;
 
+let gui = new dat.GUI({ name: 'Config' });
 let canvas_fft = $('#spectrogram');
 let canvas_spectrum = $('#spectrum');
 let canvas_timeline = $('#timeline');
@@ -11,16 +12,17 @@ let canvas_volumes = $('#volumes');
 let actions = [];
 let timer = 0;
 let config = {}, prev_config = {};
-config.sampleRate = 48;
+config.sampleRate = 48000;
 config.frameSize = 1024;
-config.dbRange = 3; // log10(re^2+im^2)
+config.dbRange = 1.5; // log10(re^2+im^2)
+config.audioKbps = 128;
 config.timeMin = 0; // sec
 config.timeMax = 0; // sec
 let audio_file = null;
 let audio_signal = null;
 // let db_log = (s) => clamp(log10(s) / config.dbRange + 1); // 0.001..1 -> -3..0 -> 0..1
-let db_log = (s) => s ** (1 / config.dbRange); // 0.001..1 -> 0.1..1
-let rgb_fn = (s) => [s * 9.0, s * 3.0, s * 1.0];
+let db_log = (a2) => a2 ** (0.5 / config.dbRange); // 0.001..1 -> 0.1..1
+let rgb_fn = (db) => [db * 9.0, db * 3.0, db * 1.0];
 
 window.onload = init;
 window.onerror = (event, source, lineno, colno, error) => showStatus(error);
@@ -34,44 +36,82 @@ function init() {
 }
 
 function initDatGUI() {
-  let gui = new dat.GUI({ name: 'Config' });
-  gui.add(config, 'sampleRate', 4, 48, 2).name('kHz').onFinishChange(processUpdatedConfig);
+  gui.add(config, 'sampleRate', 4000, 48000, 1000).name('Hz').onFinishChange(processUpdatedConfig);
   gui.add(config, 'frameSize', 256, 4096, 256).name('N').onFinishChange(processUpdatedConfig);
-  gui.add(config, 'dbRange', 1, 8, 0.5).name('dB').onFinishChange(processUpdatedConfig);
+  gui.add(config, 'dbRange', 0.25, 5, 0.25).name('dB').onFinishChange(processUpdatedConfig);
+  gui.add(config, 'audioKbps', 6, 128, 1).name('kbps');
 }
 
-function initMouseHandlers() {
+function initMouseHandlers(canvas = canvas_fft) {
   let x1 = 0, y1 = 0, x2 = 0, y2 = 0;
-  canvas_fft.onmousewheel = (e) => {
+
+  let touch_xy = (t) => [
+    t.clientX - t.target.offsetLeft,
+    t.clientY - t.target.offsetTop];
+
+  // TouchEvent handlers
+  canvas.ontouchstart = (e) => {
+    let touches = e.changedTouches;
+    if (touches.length != 1) return;
+    [x1, y1] = touch_xy(touches[0]);
+  };
+  canvas.ontouchcancel = (e) => {
+    x1 = y1 = 0;
+  };
+  canvas.ontouchend = (e) => {
+    let touches = e.changedTouches;
+    if (touches.length != 1) return;
+    [x2, y2] = touch_xy(touches[0]);
+    handleMouseUp();
+  };
+
+  // MouseEvent handlers
+  canvas.onmousewheel = (e) => {
     if (actions.length > 0) return;
     let zoom = 2 ** sign(e.deltaY);
     schedule(zoomTimeline, [zoom]);
   };
-  canvas_fft.onmousedown = (e) => {
+  canvas.onmousedown = (e) => {
     x1 = e.offsetX;
     y1 = e.offsetY;
   };
-  canvas_fft.onmouseout = (e) => {
+  canvas.onmouseout = (e) => {
     x1 = y1 = 0;
   };
-  canvas_fft.onmouseup = (e) => {
-    if (actions.length > 0) return;
+  canvas.onmouseup = (e) => {
     x2 = e.offsetX;
     y2 = e.offsetY;
-    if (!x1 && !y1)
+    handleMouseUp();
+  };
+
+  function handleMouseUp() {
+    if (!x1 && !y1 || actions.length > 0)
       return;
+
     let dx = x2 - x1;
     let dy = y2 - y1;
-    let cw = canvas_fft.clientWidth;
-    let ch = canvas_fft.clientHeight;
-    if (!dx && !dy)
+    let cw = canvas.clientWidth;
+    let ch = canvas.clientHeight;
+    let eps = 0.03;
+    let h_move = abs(dx) / cw > eps;
+    let v_move = abs(dy) / ch > eps;
+
+    if (!h_move && !v_move)
       schedule(drawPointTag, [x1 / cw, y1 / ch]);
-    else if (dy / dx < 0.05)
+    else if (!v_move)
       schedule(moveTimeline, [-dx / cw]);
-    else
-      schedule(selectArea, [x1 / cw, y1 / ch, dx / cw, dy / ch]);
+    else if (!h_move) {
+      schedule(zoomSampleRate, [dy / ch]);
+    } else {
+      schedule(selectArea, [
+        min(x1, x2) / cw,
+        min(y1, y2) / ch,
+        abs(dx) / cw,
+        abs(dy) / ch]);
+    }
+
     x1 = y1 = 0;
-  };
+  }
 }
 
 function schedule(callback, args = []) {
@@ -89,7 +129,7 @@ async function perform() {
   let ts = Date.now();
   await callback(...args);
   let dt = (Date.now() - ts) / 1000;
-  if (dt > 0.1) console.warn(callback.name, 'time:', dt.toFixed(1), 'sec');
+  if (dt > 0.1) console.debug(callback.name, 'time:', dt.toFixed(1), 'sec');
   timer = setTimeout(perform, 0);
 }
 
@@ -103,7 +143,7 @@ function showStatus(...args) {
 
 function processUpdatedConfig() {
   config.frameSize = 2 ** (log2(config.frameSize) | 0);
-  // gui.setValue('frameSize', config.frameSize);
+  config.sampleRate = (config.sampleRate / 1000 | 0) * 1000;
 
   if (config.sampleRate != prev_config.sampleRate)
     schedule(decodeAudioFile);
@@ -115,6 +155,7 @@ function processUpdatedConfig() {
     console.debug('config hasnt changed');
 
   prev_config = JSON.parse(JSON.stringify(config));
+  gui.updateDisplay();
 }
 
 async function openFile() {
@@ -128,7 +169,7 @@ async function openFile() {
 }
 
 async function decodeAudioFile() {
-  let sr = config.sampleRate * 1000;
+  let sr = config.sampleRate;
   let size_kb = (audio_file.size / 1024).toFixed(0);
   await showStatus('Decoding audio:', size_kb, 'KB @', sr, 'Hz');
   audio_signal = await utils.decodeAudioFile(audio_file, sr);
@@ -139,13 +180,39 @@ async function decodeAudioFile() {
 
 async function recordAudio() {
   $('#buttons').style.display = 'none';
-  throw new Error('Recording audio not implemented');
+  await showStatus('Requesting mic access');
+  let stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+  try {
+    await showStatus('Initializing MediaRecorder');
+    let recorder = new MediaRecorder(stream, {
+      mimeType: 'audio/webm;codecs=opus',
+      audioBitsPerSecond: config.audioKbps * 1000 | 0,
+    });
+
+    let chunks = [];
+    recorder.ondataavailable = async (e) => {
+      chunks.push(e.data);
+      audio_file = new Blob(chunks, { type: recorder.mimeType });
+      config.timeMin = 0;
+      config.timeMax = 0;
+      await decodeAudioFile();
+    };
+
+    await showStatus('Recording 3 sec...');
+    recorder.start();
+
+    await utils.sleep(3000);
+  } finally {
+    console.info('Releasing mic'); // this will stop the recorder
+    stream.getTracks().map((t) => t.stop());
+  }
 }
 
 function getAudioWindow() {
   if (!audio_signal)
     return null;
-  let sr = config.sampleRate * 1000;
+  let sr = config.sampleRate;
   let i = config.timeMin * sr | 0;
   let j = config.timeMax * sr | 0;
   let n = audio_signal.length;
@@ -157,6 +224,15 @@ function getAudioWindow() {
   res.set(src, max(0, -i));
   console.info('copied audio signal:', i, '..', j);
   return res;
+}
+
+function zoomSampleRate(zoom) {
+  dcheck(abs(zoom) <= 1);
+  let sr1 = config.sampleRate;
+  let sr2 = min(48000, ceil(sr1 * 2 ** zoom));
+  console.info('New sample rate:', sr2, 'Hz');
+  config.sampleRate = sr2;
+  processUpdatedConfig();
 }
 
 async function moveTimeline(step = 0.0) {
@@ -192,11 +268,10 @@ async function renderSpectrogram() {
   let spectrogram = utils.computePaddedSpectrogram(audio_window, num_frames, frame_size);
   utils.drawSpectrogram(canvas_fft, spectrogram, { db_log, rgb_fn });
 
-  await showStatus('Computing stats');
+  console.debug('Computing stats');
   let avg_spectrum = utils.getAvgSpectrum(spectrogram);
   let vol_timeline = utils.getVolumeTimeline(spectrogram);
   let vol_density = utils.getVolDistribution(spectrogram, canvas_volumes.height, db_log);
-  // (s) => clamp(log10(s) / 6 + 1));
 
   drawTimespanView(canvas_timespan);
   drawAverageSpectrum(canvas_spectrum, avg_spectrum);
@@ -211,7 +286,7 @@ function drawTimespanView(canvas) {
   let ch = canvas.height;
   let ctx = canvas.getContext('2d');
 
-  let sr = config.sampleRate * 1000;
+  let sr = config.sampleRate;
   let t1 = config.timeMin * sr / audio_signal.length;
   let t2 = config.timeMax * sr / audio_signal.length;
   let rx = t1 * cw | 0;
@@ -323,8 +398,8 @@ function drawPointTag(x0, y0) {
   let sr = config.sampleRate;
   let x = x0 * canvas_fft.width | 0;
   let y = y0 * canvas_fft.height | 0;
-  let t = (x - 0) / cw * audio_window.length / sr / 1000;
-  let f = (ch - 1 - (y - 0)) / ch * sr / 2 * 1000;
+  let t = (x - 0) / cw * audio_window.length / sr;
+  let f = (ch - 1 - (y - 0)) / ch * sr / 2;
 
   let sec = t.toFixed(2) + 's';
   let hz = f.toFixed(0) + ' Hz';
@@ -350,7 +425,7 @@ async function selectArea(dx, dy, dw, dh) {
   ctx.strokeRect(dx * cw, dy * ch, dw * cw, dh * ch);
   ctx.stroke();
 
-  let sr = config.sampleRate * 1000;
+  let sr = config.sampleRate;
   let aw = getAudioWindow();
   let t1 = dx * aw.length | 0;
   let t2 = (dx + dw) * aw.length | 0;
@@ -369,19 +444,14 @@ async function selectArea(dx, dy, dw, dh) {
     f2 / sr * 2 * len / 2 | 0);
 
   let aw3max = aw3.reduce((s, x) => max(s, abs(x)), 0);
-  for (let i = 0; i < len; i++) 
+  for (let i = 0; i < len; i++)
     aw3[i] /= max(1e-6, aw3max);
-
-  // audio_signal = aw3.slice(0, t2 - t1);
-  // config.timeMin = 0;
-  // config.timeMax = audio_signal.length / sr;
-  // await renderSpectrogram();
 
   schedule(playSound, [aw3]);
 }
 
 async function playSound(signal) {
-  let sr = config.sampleRate * 1000;
+  let sr = config.sampleRate;
   let duration = signal.length / sr;
   await showStatus('Playing sound:', duration.toFixed(2), 'sec');
   let ctx = new AudioContext({ sampleRate: sr });
