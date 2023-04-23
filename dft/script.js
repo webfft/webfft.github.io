@@ -5,6 +5,7 @@ const { $, clamp, dcheck } = utils;
 
 let gui = new dat.GUI({ name: 'Config' });
 let canvas_fft = $('#spectrogram');
+let canvas_overlay = $('#overlay');
 let canvas_spectrum = $('#spectrum');
 let canvas_timeline = $('#timeline');
 let canvas_timespan = $('#timespan');
@@ -20,6 +21,8 @@ config.timeMin = 0; // sec
 config.timeMax = 0; // sec
 let audio_file = null;
 let audio_signal = null;
+let selected_area = null;
+let playing_sound = null;
 // let db_log = (s) => clamp(log10(s) / config.dbRange + 1); // 0.001..1 -> -3..0 -> 0..1
 let db_log = (a2) => a2 ** (0.5 / config.dbRange); // 0.001..1 -> 0.1..1
 let rgb_fn = (db) => [db * 9.0, db * 3.0, db * 1.0];
@@ -31,6 +34,8 @@ window.onunhandledrejection = (event) => showStatus(event.reason);
 function init() {
   $('#open').onclick = () => schedule(openFile);
   $('#record').onclick = () => schedule(recordAudio);
+  $('#play').onclick = () => schedule(playSelectedArea);
+  $('#save').onclick = () => schedule(saveSelectedArea);
   initMouseHandlers();
   initDatGUI();
 }
@@ -40,78 +45,6 @@ function initDatGUI() {
   gui.add(config, 'frameSize', 256, 4096, 256).name('N').onFinishChange(processUpdatedConfig);
   gui.add(config, 'dbRange', 0.25, 5, 0.25).name('dB').onFinishChange(processUpdatedConfig);
   gui.add(config, 'audioKbps', 6, 128, 1).name('kbps');
-}
-
-function initMouseHandlers(canvas = canvas_fft) {
-  let x1 = 0, y1 = 0, x2 = 0, y2 = 0;
-
-  let touch_xy = (t) => [
-    t.clientX - t.target.offsetLeft,
-    t.clientY - t.target.offsetTop];
-
-  // TouchEvent handlers
-  canvas.ontouchstart = (e) => {
-    let touches = e.changedTouches;
-    if (touches.length != 1) return;
-    [x1, y1] = touch_xy(touches[0]);
-  };
-  canvas.ontouchcancel = (e) => {
-    x1 = y1 = 0;
-  };
-  canvas.ontouchend = (e) => {
-    let touches = e.changedTouches;
-    if (touches.length != 1) return;
-    [x2, y2] = touch_xy(touches[0]);
-    handleMouseUp();
-  };
-
-  // MouseEvent handlers
-  canvas.onmousewheel = (e) => {
-    if (actions.length > 0) return;
-    let zoom = 2 ** sign(e.deltaY);
-    schedule(zoomTimeline, [zoom]);
-  };
-  canvas.onmousedown = (e) => {
-    x1 = e.offsetX;
-    y1 = e.offsetY;
-  };
-  canvas.onmouseout = (e) => {
-    x1 = y1 = 0;
-  };
-  canvas.onmouseup = (e) => {
-    x2 = e.offsetX;
-    y2 = e.offsetY;
-    handleMouseUp();
-  };
-
-  function handleMouseUp() {
-    if (!x1 && !y1 || actions.length > 0)
-      return;
-
-    let dx = x2 - x1;
-    let dy = y2 - y1;
-    let cw = canvas.clientWidth;
-    let ch = canvas.clientHeight;
-    let eps = 0.03;
-    let h_move = abs(dx) / cw > eps;
-    let v_move = abs(dy) / ch > eps;
-
-    if (!h_move && !v_move)
-      schedule(drawPointTag, [x1 / cw, y1 / ch]);
-    else if (!v_move)
-      schedule(moveTimeline, [-dx / cw]);
-    else if (!h_move) {
-      schedule(zoomSampleRate, [dy / ch]);
-    } else {
-      schedule(selectArea, [
-        min(x1, x2) / cw,
-        min(y1, y2) / ch,
-        abs(dx) / cw,
-        abs(dy) / ch]);
-    }
-
-    x1 = y1 = 0;
-  }
 }
 
 function schedule(callback, args = []) {
@@ -161,7 +94,6 @@ function processUpdatedConfig() {
 async function openFile() {
   let file = await utils.selectAudioFile();
   if (!file) return;
-  $('#buttons').style.display = 'none';
   audio_file = file;
   config.timeMin = 0;
   config.timeMax = 0;
@@ -179,8 +111,8 @@ async function decodeAudioFile() {
 }
 
 async function recordAudio() {
-  $('#buttons').style.display = 'none';
   await showStatus('Requesting mic access');
+  let onclick = $('#record').onclick;
   let stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
   try {
@@ -199,11 +131,15 @@ async function recordAudio() {
       await decodeAudioFile();
     };
 
-    await showStatus('Recording 3 sec...');
+    await showStatus('Recording...');
     recorder.start();
 
-    await utils.sleep(3000);
+    $('#record').innerText = 'Stop';
+    await new Promise((resolve) =>
+      $('#record').onclick = resolve);
   } finally {
+    $('#record').innerText = 'Record';
+    $('#record').onclick = onclick;
     console.info('Releasing mic'); // this will stop the recorder
     stream.getTracks().map((t) => t.stop());
   }
@@ -218,7 +154,7 @@ function getAudioWindow() {
   let n = audio_signal.length;
   if (i >= 0 && j <= n)
     return audio_signal.subarray(i, j);
-  dcheck(j - i < 10e6);
+  dcheck(j - i < 50e6);
   let res = new Float32Array(j - i);
   let src = audio_signal.subarray(max(0, i), min(n, j));
   res.set(src, max(0, -i));
@@ -226,10 +162,10 @@ function getAudioWindow() {
   return res;
 }
 
-function zoomSampleRate(zoom) {
-  dcheck(abs(zoom) <= 1);
+function moveFreqsRange(step) {
+  dcheck(abs(step) <= 1);
   let sr1 = config.sampleRate;
-  let sr2 = min(48000, ceil(sr1 * 2 ** zoom));
+  let sr2 = min(48000, sr1 * (1 + 0.5 * step));
   console.info('New sample rate:', sr2, 'Hz');
   config.sampleRate = sr2;
   processUpdatedConfig();
@@ -271,12 +207,12 @@ async function renderSpectrogram() {
   console.debug('Computing stats');
   let avg_spectrum = utils.getAvgSpectrum(spectrogram);
   let vol_timeline = utils.getVolumeTimeline(spectrogram);
-  let vol_density = utils.getVolDistribution(spectrogram, canvas_volumes.height, db_log);
+  let amp_density = utils.getAmpDensity(spectrogram, canvas_volumes.height);
 
   drawTimespanView(canvas_timespan);
   drawAverageSpectrum(canvas_spectrum, avg_spectrum);
   drawVolumeTimeline(canvas_timeline, vol_timeline);
-  drawVolumeDistribution(canvas_volumes, vol_density);
+  drawAmpDensity(canvas_volumes, amp_density);
 
   await showStatus('');
 }
@@ -291,35 +227,35 @@ function drawTimespanView(canvas) {
   let t2 = config.timeMax * sr / audio_signal.length;
   let rx = t1 * cw | 0;
   let rw = (t2 - t1) * cw | 0;
-  let rh = ch / 4 | 0;
+  let rh = ch / 8 | 0;
   let ry = ch * 0.5 - rh * 0.5 | 0;
 
   ctx.clearRect(0, 0, cw, ch);
 
-  ctx.strokeStyle = '#842';
+  ctx.strokeStyle = '#080';
   ctx.moveTo(0, ch / 2);
   ctx.lineTo(cw, ch / 2);
   ctx.stroke();
 
-  ctx.fillStyle = '#f84';
+  ctx.fillStyle = '#080';
   ctx.fillRect(rx, ry, rw, rh);
 }
 
-function drawVolumeDistribution(canvas, vol_density) {
+function drawAmpDensity(canvas, amp_density) {
   let cw = canvas.width;
   let ch = canvas.height;
   let ctx = canvas.getContext('2d');
   let img = ctx.getImageData(0, 0, cw, ch);
   img.data.fill(0);
 
-  let vol_max = vol_density.reduce((s, x) => max(s, x), 0);
+  let vol_max = amp_density.reduce((s, x) => max(s, x), 0);
 
   for (let y = 0; y < ch; y++) {
     for (let x = 0; x < cw; x++) {
       let s = (ch - 1 - y) / ch;
-      let f = s * vol_density.length | 0;
+      let f = s * amp_density.length | 0;
       let a = Math.abs((x + 0.5) / cw * 2 - 1);
-      let a_max = db_log(vol_density[f] / vol_max);
+      let a_max = db_log((amp_density[f] / vol_max) ** 0.5);
       if (a > a_max) continue;
       let [r, g, b] = rgb_fn(s);
       let i = (y * cw + x) * 4;
@@ -391,13 +327,14 @@ function drawPointTag(x0, y0) {
   let audio_window = getAudioWindow();
   if (!audio_window) return;
 
-  let cw = canvas_fft.width;
-  let ch = canvas_fft.height;
-  let ctx = canvas_fft.getContext('2d');
+  let canvas = canvas_overlay;
+  let cw = canvas.width;
+  let ch = canvas.height;
+  let ctx = canvas.getContext('2d');
 
   let sr = config.sampleRate;
-  let x = x0 * canvas_fft.width | 0;
-  let y = y0 * canvas_fft.height | 0;
+  let x = x0 * canvas.width | 0;
+  let y = y0 * canvas.height | 0;
   let t = (x - 0) / cw * audio_window.length / sr;
   let f = (ch - 1 - (y - 0)) / ch * sr / 2;
 
@@ -416,26 +353,69 @@ function drawPointTag(x0, y0) {
 }
 
 async function selectArea(dx, dy, dw, dh) {
-  let canvas = canvas_fft;
+  let sr = config.sampleRate;
+  let aw = sr * (config.timeMax - config.timeMin);
+  let t1 = dx * aw | 0;
+  let t2 = (dx + dw) * aw | 0;
+  let f2 = (1 - dy) * sr / 2 | 0;
+  let f1 = (1 - dy - dh) * sr / 2 | 0;
+
+  selected_area = { t1, t2, f1, f2, dx, dy, dw, dh };
+  drawSelectedArea();
+
+  let t_span = (t1 / sr).toFixed(2) + '..' + (t2 / sr).toFixed(2) + ' s';
+  let f_span = f1 + '..' + f2 + ' Hz';
+  console.info('Selected sound:', t_span, 'x', f_span);
+}
+
+function drawSelectedArea(area = selected_area, vline_dx = 0) {
+  let canvas = canvas_overlay;
   let cw = canvas.width;
   let ch = canvas.height;
   let ctx = canvas.getContext('2d');
 
+  ctx.clearRect(0, 0, cw, ch);
   ctx.strokeStyle = '#0f0';
-  ctx.strokeRect(dx * cw, dy * ch, dw * cw, dh * ch);
-  ctx.stroke();
+  ctx.lineWidth = 3;
+
+  let { dx, dy, dw, dh } = area || { dx: 0, dy: 0, dw: 1, dh: 1 };
+
+  if (area)
+    ctx.strokeRect(dx * cw, dy * ch, dw * cw, dh * ch);
+
+  if (vline_dx > 0) {
+    let x0 = dx + dw * vline_dx;
+    ctx.beginPath();
+    ctx.moveTo(cw * x0, ch * dy);
+    ctx.lineTo(cw * x0, ch * (dy + dh));
+    ctx.stroke();
+  }
+}
+
+async function playSelectedArea() {
+  if (playing_sound) {
+    stopSound();
+    return;
+  }
+
+  if (!selected_area) {
+    await playSound();
+    return;
+  }
+
+  await extractSelectedSound();
+  await playSound(selected_area.wave);
+}
+
+async function extractSelectedSound() {
+  if (selected_area.wave)
+    return;
 
   let sr = config.sampleRate;
   let aw = getAudioWindow();
-  let t1 = dx * aw.length | 0;
-  let t2 = (dx + dw) * aw.length | 0;
-  let f2 = (1 - dy) * sr / 2 | 0;
-  let f1 = (1 - dy - dh) * sr / 2 | 0;
+  let { t1, t2, f1, f2 } = selected_area;
 
-  let t_span = (t1 / sr).toFixed(2) + '..' + (t2 / sr).toFixed(2) + ' s';
-  let f_span = f1 + '..' + f2 + ' Hz';
-  await showStatus('Applying bandpass filter:', t_span, f_span);
-
+  await showStatus('Applying bandpass filter');
   let len = 2 ** ceil(log2(t2 - t1));
   let aw2 = new Float32Array(len);
   aw2.set(aw.subarray(t1, t2), 0);
@@ -443,14 +423,32 @@ async function selectArea(dx, dy, dw, dh) {
     f1 / sr * 2 * len / 2 | 0,
     f2 / sr * 2 * len / 2 | 0);
 
-  let aw3max = aw3.reduce((s, x) => max(s, abs(x)), 0);
+  let aw4 = aw3.subarray(0, t2 - t1);
+  let amp_max = aw4.reduce((s, x) => max(s, abs(x)), 0);
   for (let i = 0; i < len; i++)
-    aw3[i] /= max(1e-6, aw3max);
+    aw4[i] /= max(1e-6, amp_max);
 
-  schedule(playSound, [aw3]);
+  selected_area.wave = aw4;
 }
 
-async function playSound(signal) {
+async function saveSelectedArea() {
+  let wave = audio_signal;
+  if (selected_area) {
+    await extractSelectedSound();
+    wave = selected_area.wave;
+  }
+
+  await showStatus('Generating a .wav file');
+  let data = utils.generateWavFile(wave, config.sampleRate);
+  let blob = new Blob([data], { type: 'audio/wav' });
+  let a = document.createElement('a');
+  a.download = blob.size + '.wav';
+  a.href = URL.createObjectURL(blob);
+  a.click();
+  await showStatus('');
+}
+
+async function playSound(signal = audio_signal) {
   let sr = config.sampleRate;
   let duration = signal.length / sr;
   await showStatus('Playing sound:', duration.toFixed(2), 'sec');
@@ -459,13 +457,120 @@ async function playSound(signal) {
   try {
     let buffer = ctx.createBuffer(1, signal.length, sr);
     buffer.getChannelData(0).set(signal, 0);
-    let source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.connect(ctx.destination);
-    source.start();
-    await new Promise((resolve) => source.onended = resolve);
+    let src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(ctx.destination);
+    playing_sound = { ctx, src };
+    drawPlaybackProgress();
+    src.start();
+    $('#play').innerText = 'Stop';
+    await new Promise((resolve) => src.onended = resolve);
+    console.debug('Sound playback ended');
     await showStatus('');
   } finally {
     ctx.close();
+    playing_sound = null;
+    showStatus('');
+    $('#play').innerText = 'Play';
+  }
+}
+
+function drawPlaybackProgress() {
+  if (!playing_sound)
+    return;
+
+  let ctx = playing_sound.ctx;
+  let src = playing_sound.src;
+  let time0 = ctx.currentTime;
+  let duration = src.buffer.duration;
+
+  let timer = setInterval(() => {
+    if (!playing_sound) {
+      clearInterval(timer);
+      console.debug('Stopped playback timer');
+      return;
+    }
+    let dt = ctx.currentTime - time0;
+    drawSelectedArea(selected_area, dt / duration);
+  }, 15);
+}
+
+async function stopSound() {
+  await showStatus('Stopping playback');
+  playing_sound?.src.stop();
+}
+
+function initMouseHandlers(canvas = canvas_overlay) {
+  let x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+
+  let touch_xy = (t) => [
+    t.clientX - t.target.offsetLeft,
+    t.clientY - t.target.offsetTop];
+
+  // TouchEvent handlers
+  canvas.ontouchstart = (e) => {
+    e.preventDefault();
+    let touches = e.changedTouches;
+    if (touches.length != 1) return;
+    [x1, y1] = touch_xy(touches[0]);
+  };
+  canvas.ontouchcancel = (e) => {
+    e.preventDefault();
+    x1 = y1 = 0;
+  };
+  canvas.ontouchend = (e) => {
+    e.preventDefault();
+    let touches = e.changedTouches;
+    if (touches.length != 1) return;
+    [x2, y2] = touch_xy(touches[0]);
+    handleMouseUp();
+  };
+
+  // MouseEvent handlers
+  canvas.onmousewheel = (e) => {
+    e.preventDefault();
+    if (actions.length > 0) return;
+    let zoom = 2 ** sign(e.deltaY);
+    schedule(zoomTimeline, [zoom]);
+  };
+  canvas.onmousedown = (e) => {
+    e.preventDefault();
+    x1 = e.offsetX;
+    y1 = e.offsetY;
+  };
+  canvas.onmouseout = (e) => {
+    e.preventDefault();
+    x1 = y1 = 0;
+  };
+  canvas.onmouseup = (e) => {
+    e.preventDefault();
+    x2 = e.offsetX;
+    y2 = e.offsetY;
+    handleMouseUp();
+  };
+
+  function handleMouseUp() {
+    if (!x1 && !y1 || actions.length > 0)
+      return;
+
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let cw = canvas.clientWidth;
+    let ch = canvas.clientHeight;
+    let eps = 0.015;
+    let h_move = abs(dx) / cw > eps;
+    let v_move = abs(dy) / ch > eps;
+
+    if (!h_move && !v_move)
+      schedule(drawPointTag, [x1 / cw, y1 / ch]);
+    else if (!v_move)
+      schedule(moveTimeline, [-dx / cw]);
+    else if (!h_move) {
+      schedule(moveFreqsRange, [-dy / ch]);
+    } else {
+      schedule(selectArea, [min(x1, x2) / cw, min(y1, y2) / ch, abs(dx) / cw, abs(dy) / ch]);
+    }
+
+    x1 = y1 = 0;
   }
 }

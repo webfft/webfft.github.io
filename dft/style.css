@@ -1,6 +1,7 @@
 body {
   margin: 0;
   font-family: monospace;
+  font-size: xxx-large;
   color: #fff;
   background: #000;
 }
@@ -12,6 +13,16 @@ canvas#spectrogram {
   width: 90%;
   height: 90%;
   background: #000;
+}
+
+canvas#overlay {
+  z-index: 2;
+  position: fixed;
+  left: 5%;
+  top: 5%;
+  width: 90%;
+  height: 90%;
+  background: transparent;
 }
 
 canvas#volumes {
@@ -64,10 +75,21 @@ canvas#timespan {
 }
 
 #buttons {
-  padding: 0.25em;
+  z-index: 3;
+  position: fixed;
+  top: 5%;
+  left: 5%;
 }
 
 button {
-  font-size: 2em;
-  padding: 1em;
+  font-size: xx-large;
+  padding: 0.5em;
+  color: #080;
+  border: 3px solid #080;
+  background: #000;
+  cursor: pointer;
+}
+
+html > body > .dg.ac {
+  z-index: 4;
 }

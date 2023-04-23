@@ -183,7 +183,7 @@ export function getVolumeTimeline(spectrogram) {
   return timeline;
 }
 
-export function getVolDistribution(spectrogram, num_bins = 1024, db_log = s => s) {
+export function getAmpDensity(spectrogram, num_bins = 1024, db_log = Math.sqrt) {
   dcheck(is_spectrogram(spectrogram));
   let density = new Float32Array(num_bins);
   let abs2_max = getFrameMax(spectrogram.array);
@@ -238,4 +238,26 @@ export async function decodeAudioFile(file, sample_rate) {
   } finally {
     audio_ctx.close();
   }
+}
+
+// https://docs.fileformat.com/audio/wav
+export function generateWavFile(wave, sample_rate) {
+  let len = wave.length;
+  let i16 = new Int16Array(22 + len + len % 2);
+  let i32 = new Int32Array(i16.buffer);
+
+  i16.set([
+    0x4952, 0x4646, 0x0000, 0x0000, 0x4157, 0x4556, 0x6d66, 0x2074,
+    0x0010, 0x0000, 0x0001, 0x0001, 0x0000, 0x0000, 0x0000, 0x0000,
+    0x0002, 0x0010, 0x6164, 0x6174, 0x0000, 0x0000]);
+
+  i32[1] = i32.length * 4; // file size
+  i32[6] = sample_rate;
+  i32[7] = sample_rate * 2; // bytes per second
+  i32[10] = len * 2; // data size
+
+  for (let i = 0; i < len; i++)
+    i16[22 + i] = wave[i] * 0x7FFF;
+
+  return i16.buffer;
 }
