@@ -1,0 +1,25 @@
+<head>
+  <title>DFT</title>
+  <link rel="stylesheet"
+        href="style.css" />
+</head>
+
+<body>
+  <canvas id="spectrogram" width="1024" height="1024"></canvas>
+  <canvas id="spectrum" width="64" height="1024"></canvas>
+  <canvas id="timeline" width="1024" height="64"></canvas>
+  <canvas id="timespan" width="1024" height="64"></canvas>
+  <canvas id="volumes" width="64" height="1024"></canvas>
+
+  <div id="middle">
+    <div id="status" style="display:none"></div>
+    <div id="buttons">
+      <button id="open">Open</button>
+      <button id="record">Record</button>
+    </div>
+  </div>
+
+  <script src="/dat.gui.js"></script>
+  <script src="script.js"
+          type="module"></script>
+</body>

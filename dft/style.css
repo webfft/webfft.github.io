@@ -1,0 +1,73 @@
+body {
+  margin: 0;
+  font-family: monospace;
+  color: #fff;
+  background: #000;
+}
+
+canvas#spectrogram {
+  position: fixed;
+  left: 5%;
+  top: 5%;
+  width: 90%;
+  height: 90%;
+  background: #000;
+}
+
+canvas#volumes {
+  position: fixed;
+  left: 95%;
+  top: 5%;
+  width: 5%;
+  height: 90%;
+  background: #000;
+}
+
+canvas#spectrum {
+  position: fixed;
+  left: 0;
+  top: 5%;
+  width: 5%;
+  height: 90%;
+  background: #000;
+}
+
+canvas#timeline {
+  position: fixed;
+  left: 5%;
+  bottom: 0;
+  width: 90%;
+  height: 5%;
+  background: #000;
+}
+
+canvas#timespan {
+  position: fixed;
+  left: 5%;
+  top: 0;
+  width: 90%;
+  height: 5%;
+  background: #000;
+}
+
+#middle {
+  z-index: 2;
+  position: fixed;
+  width: 100%;
+  top: 50%;
+  text-align: center;
+}
+
+#status {
+  background: #448;
+  padding: 0.25em;
+}
+
+#buttons {
+  padding: 0.25em;
+}
+
+button {
+  font-size: 2em;
+  padding: 1em;
+}
