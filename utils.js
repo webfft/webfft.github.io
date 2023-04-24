@@ -183,13 +183,13 @@ export function getVolumeTimeline(spectrogram) {
   return timeline;
 }
 
-export function getAmpDensity(spectrogram, num_bins = 1024, db_log = Math.sqrt) {
+export function getAmpDensity(spectrogram, num_bins = 1024, amp2_map = Math.sqrt) {
   dcheck(is_spectrogram(spectrogram));
   let density = new Float32Array(num_bins);
   let abs2_max = getFrameMax(spectrogram.array);
 
   aggFrameData(spectrogram.array, reim2, (_, abs2) => {
-    let i = db_log(abs2 / abs2_max) * num_bins | 0;
+    let i = amp2_map(abs2 / abs2_max) * num_bins | 0;
     density[i] += 2 / spectrogram.array.length;
   });
 

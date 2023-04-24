@@ -21,6 +21,7 @@ config.timeMin = 0; // sec
 config.timeMax = 0; // sec
 let audio_file = null;
 let audio_signal = null;
+let spectrogram = null;
 let selected_area = null;
 let playing_sound = null;
 // let db_log = (s) => clamp(log10(s) / config.dbRange + 1); // 0.001..1 -> -3..0 -> 0..1
@@ -36,6 +37,8 @@ function init() {
   $('#record').onclick = () => schedule(recordAudio);
   $('#play').onclick = () => schedule(playSelectedArea);
   $('#save').onclick = () => schedule(saveSelectedArea);
+  $('#grid').onclick = () => schedule(toggleGridMode);
+  toggleGridMode();
   initMouseHandlers();
   initDatGUI();
 }
@@ -71,7 +74,7 @@ function showStatus(...args) {
   text && console.info(text);
   $('#status').style.display = text ? '' : 'none';
   $('#status').innerText = text;
-  return utils.sleep(0);
+  return utils.sleep(10);
 }
 
 function processUpdatedConfig() {
@@ -81,9 +84,9 @@ function processUpdatedConfig() {
   if (config.sampleRate != prev_config.sampleRate)
     schedule(decodeAudioFile);
   else if (config.frameSize != prev_config.frameSize)
-    schedule(renderSpectrogram);
+    schedule(computeSpectrogram);
   else if (config.dbRange != prev_config.dbRange)
-    schedule(renderSpectrogram);
+    schedule(drawSpectrogram);
   else
     console.debug('config hasnt changed');
 
@@ -107,7 +110,7 @@ async function decodeAudioFile() {
   audio_signal = await utils.decodeAudioFile(audio_file, sr);
   if (!config.timeMin && !config.timeMax)
     config.timeMax = audio_signal.length / sr;
-  await renderSpectrogram();
+  await computeSpectrogram();
 }
 
 async function recordAudio() {
@@ -158,7 +161,7 @@ function getAudioWindow() {
   let res = new Float32Array(j - i);
   let src = audio_signal.subarray(max(0, i), min(n, j));
   res.set(src, max(0, -i));
-  console.info('copied audio signal:', i, '..', j);
+  console.debug('Copied audio signal:', i, '..', j);
   return res;
 }
 
@@ -179,7 +182,7 @@ async function moveTimeline(step = 0.0) {
   let b2 = b + (b - a) * step;
   config.timeMin = a2;
   config.timeMax = b2;
-  await renderSpectrogram();
+  await computeSpectrogram();
 }
 
 async function zoomTimeline(zoom = 1.0) {
@@ -190,10 +193,10 @@ async function zoomTimeline(zoom = 1.0) {
   let b2 = (a + b) / 2 + (b - a) / 2 * zoom;
   config.timeMin = a2;
   config.timeMax = b2;
-  await renderSpectrogram();
+  await computeSpectrogram();
 }
 
-async function renderSpectrogram() {
+async function computeSpectrogram() {
   let num_frames = canvas_fft.width;
   let frame_size = config.frameSize;
   let time_min = config.timeMin.toFixed(2);
@@ -201,20 +204,27 @@ async function renderSpectrogram() {
   let time_span = time_min + '..' + time_max;
   await showStatus('Computing DFT:', time_span, 'sec @', num_frames, 'x', frame_size);
   let audio_window = getAudioWindow();
-  let spectrogram = utils.computePaddedSpectrogram(audio_window, num_frames, frame_size);
+  spectrogram = utils.computePaddedSpectrogram(audio_window, num_frames, frame_size);
+  drawSpectrogram();
+  await showStatus('');
+
+  let _t = audio_window.length;
+  let _w = num_frames;
+  let _f = frame_size;
+  let _fft = _w * _f * log2(_f);
+  let _cwt = _f * _t * log2(_t);
+  console.debug('CWT vs FFT runtime:', (_cwt / _fft).toFixed(2) + 'x');
+}
+
+function drawSpectrogram() {
   utils.drawSpectrogram(canvas_fft, spectrogram, { db_log, rgb_fn });
 
-  console.debug('Computing stats');
-  let avg_spectrum = utils.getAvgSpectrum(spectrogram);
   let vol_timeline = utils.getVolumeTimeline(spectrogram);
-  let amp_density = utils.getAmpDensity(spectrogram, canvas_volumes.height);
 
   drawTimespanView(canvas_timespan);
-  drawAverageSpectrum(canvas_spectrum, avg_spectrum);
+  drawAvgSpectrum();
   drawVolumeTimeline(canvas_timeline, vol_timeline);
-  drawAmpDensity(canvas_volumes, amp_density);
-
-  await showStatus('');
+  drawAmpDensity();
 }
 
 function drawTimespanView(canvas) {
@@ -231,31 +241,31 @@ function drawTimespanView(canvas) {
   let ry = ch * 0.5 - rh * 0.5 | 0;
 
   ctx.clearRect(0, 0, cw, ch);
+  ctx.strokeStyle = '#fc2';
+  ctx.fillStyle = '#f82';
 
-  ctx.strokeStyle = '#080';
   ctx.moveTo(0, ch / 2);
   ctx.lineTo(cw, ch / 2);
   ctx.stroke();
-
-  ctx.fillStyle = '#080';
   ctx.fillRect(rx, ry, rw, rh);
 }
 
-function drawAmpDensity(canvas, amp_density) {
+function drawAmpDensity(canvas = canvas_volumes) {
   let cw = canvas.width;
   let ch = canvas.height;
   let ctx = canvas.getContext('2d');
   let img = ctx.getImageData(0, 0, cw, ch);
-  img.data.fill(0);
+  let amp_density = utils.getAmpDensity(spectrogram, ch);
+  let amp_max = amp_density.reduce((s, x) => max(s, x), 0);
 
-  let vol_max = amp_density.reduce((s, x) => max(s, x), 0);
+  img.data.fill(0);
 
   for (let y = 0; y < ch; y++) {
     for (let x = 0; x < cw; x++) {
       let s = (ch - 1 - y) / ch;
       let f = s * amp_density.length | 0;
       let a = Math.abs((x + 0.5) / cw * 2 - 1);
-      let a_max = db_log((amp_density[f] / vol_max) ** 0.5);
+      let a_max = (amp_density[f] / amp_max) ** 0.25;
       if (a > a_max) continue;
       let [r, g, b] = rgb_fn(s);
       let i = (y * cw + x) * 4;
@@ -269,15 +279,15 @@ function drawAmpDensity(canvas, amp_density) {
   ctx.putImageData(img, 0, 0);
 }
 
-function drawAverageSpectrum(canvas, avg_spectrum) {
+function drawAvgSpectrum(canvas = canvas_spectrum) {
   let cw = canvas.width;
   let ch = canvas.height;
   let ctx = canvas.getContext('2d');
   let img = ctx.getImageData(0, 0, cw, ch);
-  img.data.fill(0);
-
+  let avg_spectrum = utils.getAvgSpectrum(spectrogram);
   let abs_max = avg_spectrum.reduce((s, x) => max(s, x), 0);
 
+  img.data.fill(0);
   for (let y = 0; y < ch; y++) {
     for (let x = 0; x < cw; x++) {
       let f = (ch - 1 - y) / ch * avg_spectrum.length / 2 | 0;
@@ -352,7 +362,7 @@ function drawPointTag(x0, y0) {
   ctx.fill();
 }
 
-async function selectArea(dx, dy, dw, dh) {
+async function selectArea(is_final, dx, dy, dw, dh) {
   let sr = config.sampleRate;
   let aw = sr * (config.timeMax - config.timeMin);
   let t1 = dx * aw | 0;
@@ -362,6 +372,7 @@ async function selectArea(dx, dy, dw, dh) {
 
   selected_area = { t1, t2, f1, f2, dx, dy, dw, dh };
   drawSelectedArea();
+  if (!is_final) return;
 
   let t_span = (t1 / sr).toFixed(2) + '..' + (t2 / sr).toFixed(2) + ' s';
   let f_span = f1 + '..' + f2 + ' Hz';
@@ -376,7 +387,7 @@ function drawSelectedArea(area = selected_area, vline_dx = 0) {
 
   ctx.clearRect(0, 0, cw, ch);
   ctx.strokeStyle = '#0f0';
-  ctx.lineWidth = 3;
+  ctx.lineWidth = 2;
 
   let { dx, dy, dw, dh } = area || { dx: 0, dy: 0, dw: 1, dh: 1 };
 
@@ -500,8 +511,33 @@ async function stopSound() {
   playing_sound?.src.stop();
 }
 
-function initMouseHandlers(canvas = canvas_overlay) {
+function toggleGridMode() {
+  $('#grid').classList.toggle('disabled');
+  let css = canvas_overlay.style;
+  css.display = css.display == 'none' ? '' : 'none';
+  if (css.display == 'none') {
+    selected_area = null;
+    drawSelectedArea();
+  }
+}
+
+function initMouseHandlers() {
+  attachMouseHandlers(canvas_overlay, {
+    point: (x, y) => schedule(drawPointTag, [x, y]),
+    select: (x, y, w, h) => selectArea(true, x, y, w, h),
+    selecting: (x, y, w, h) => selectArea(false, x, y, w, h),
+  });
+
+  attachMouseHandlers(canvas_fft, {
+    hmove: (dx) => schedule(moveTimeline, [-dx]),
+    vmove: (dy) => schedule(moveFreqsRange, [dy]),
+    hzoom: (zoom) => schedule(zoomTimeline, [zoom]),
+  });
+}
+
+function attachMouseHandlers(canvas, handlers) {
   let x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+  let t2_start, t2_end; // 2-touch zoom on phones
 
   let touch_xy = (t) => [
     t.clientX - t.target.offsetLeft,
@@ -511,19 +547,34 @@ function initMouseHandlers(canvas = canvas_overlay) {
   canvas.ontouchstart = (e) => {
     e.preventDefault();
     let touches = e.changedTouches;
-    if (touches.length != 1) return;
-    [x1, y1] = touch_xy(touches[0]);
+    if (touches.length == 1)
+      [x1, y1] = touch_xy(touches[0]);
+    else if (touches.length == 2)
+      t2_start = touches;
   };
   canvas.ontouchcancel = (e) => {
     e.preventDefault();
     x1 = y1 = 0;
+    t2_start = null;
+  };
+  canvas.ontouchmove = (e) => {
+    e.preventDefault();
+    let touches = e.changedTouches;
+    if (touches.length == 1) {
+      [x2, y2] = touch_xy(touches[0]);
+      reportState(false);
+    }
   };
   canvas.ontouchend = (e) => {
     e.preventDefault();
     let touches = e.changedTouches;
-    if (touches.length != 1) return;
-    [x2, y2] = touch_xy(touches[0]);
-    handleMouseUp();
+    if (touches.length == 1) {
+      [x2, y2] = touch_xy(touches[0]);
+      reportState(true);
+    } else if (touches.length == 2) {
+      t2_end = touches;
+      reportState(true);
+    }
   };
 
   // MouseEvent handlers
@@ -531,7 +582,7 @@ function initMouseHandlers(canvas = canvas_overlay) {
     e.preventDefault();
     if (actions.length > 0) return;
     let zoom = 2 ** sign(e.deltaY);
-    schedule(zoomTimeline, [zoom]);
+    handlers.hzoom?.(zoom);
   };
   canvas.onmousedown = (e) => {
     e.preventDefault();
@@ -542,35 +593,63 @@ function initMouseHandlers(canvas = canvas_overlay) {
     e.preventDefault();
     x1 = y1 = 0;
   };
+  canvas.onmousemove = (e) => {
+    e.preventDefault();
+    x2 = e.offsetX;
+    y2 = e.offsetY;
+    reportState(false);
+  };
   canvas.onmouseup = (e) => {
     e.preventDefault();
     x2 = e.offsetX;
     y2 = e.offsetY;
-    handleMouseUp();
+    reportState(true);
   };
 
-  function handleMouseUp() {
-    if (!x1 && !y1 || actions.length > 0)
+  function reportState(is_final) {
+    if (actions.length > 0)
       return;
 
-    let dx = x2 - x1;
-    let dy = y2 - y1;
-    let cw = canvas.clientWidth;
-    let ch = canvas.clientHeight;
-    let eps = 0.015;
-    let h_move = abs(dx) / cw > eps;
-    let v_move = abs(dy) / ch > eps;
-
-    if (!h_move && !v_move)
-      schedule(drawPointTag, [x1 / cw, y1 / ch]);
-    else if (!v_move)
-      schedule(moveTimeline, [-dx / cw]);
-    else if (!h_move) {
-      schedule(moveFreqsRange, [-dy / ch]);
-    } else {
-      schedule(selectArea, [min(x1, x2) / cw, min(y1, y2) / ch, abs(dx) / cw, abs(dy) / ch]);
+    if (t2_start) {
+      let a1 = touch_xy(t2_start[0]);
+      let a2 = touch_xy(t2_start[1]);
+      let b1 = touch_xy(t2_end[0]);
+      let b2 = touch_xy(t2_end[1]);
+      let w1 = abs(a1[0] - a2[0]);
+      let w2 = abs(b1[0] - b2[0]);
+      let zoom = w2 / w1;
+      handlers.hzoom?.(zoom);
+      return;
     }
 
-    x1 = y1 = 0;
+    if (!x1 && !y1)
+      return;
+
+    let cw = canvas.clientWidth;
+    let ch = canvas.clientHeight;
+    x2 = clamp(x2, 0, cw);
+    y2 = clamp(y2, 0, ch);
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let eps = 0.05;
+    let h_move = abs(dx) / cw > eps;
+    let v_move = abs(dy) / ch > eps;
+    let x0 = min(x1, x2) / cw;
+    let y0 = min(y1, y2) / ch;
+    let w0 = abs(dx) / cw;
+    let h0 = abs(dy) / ch;
+
+    if (!is_final) {
+      handlers.selecting?.(x0, y0, w0, h0);
+    } else if (!h_move && !v_move) {
+      handlers.point?.(x1 / cw, y1 / ch);
+    } else {
+      handlers.hmove?.(dx / cw);
+      handlers.vmove?.(dy / ch);
+      handlers.select?.(x0, y0, w0, h0);
+    }
+
+    if (is_final)
+      x1 = y1 = 0;
   }
 }

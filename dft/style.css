@@ -88,6 +88,16 @@ button {
   border: 3px solid #080;
   background: #000;
   cursor: pointer;
+  user-select: none;
+}
+
+button:focus {
+  outline: none;
+}
+
+button.disabled {
+  border-color: #888;
+  color: #888;
 }
 
 html > body > .dg.ac {
