@@ -5,6 +5,7 @@ const { $, clamp, dcheck } = utils;
 
 let gui = new dat.GUI({ name: 'Config' });
 let canvas_fft = $('#spectrogram');
+let div_mover = $('#mover');
 let canvas_overlay = $('#overlay');
 let canvas_spectrum = $('#spectrum');
 let canvas_timeline = $('#timeline');
@@ -38,6 +39,7 @@ function init() {
   $('#play').onclick = () => schedule(playSelectedArea);
   $('#save').onclick = () => schedule(saveSelectedArea);
   $('#grid').onclick = () => schedule(toggleGridMode);
+  $('#reset').onclick = () => schedule(resetView);
   toggleGridMode();
   initMouseHandlers();
   initDatGUI();
@@ -92,6 +94,14 @@ function processUpdatedConfig() {
 
   prev_config = JSON.parse(JSON.stringify(config));
   gui.updateDisplay();
+}
+
+async function resetView() {
+  config.sampleRate = 48000;
+  config.timeMin = 0;
+  config.timeMax = 0;
+  await decodeAudioFile();
+  processUpdatedConfig();
 }
 
 async function openFile() {
@@ -165,24 +175,42 @@ function getAudioWindow() {
   return res;
 }
 
-function moveFreqsRange(step) {
+function moveFreqsRange(step = 0, is_temp = false) {
   dcheck(abs(step) <= 1);
   let sr1 = config.sampleRate;
-  let sr2 = min(48000, sr1 * (1 + 0.5 * step));
-  console.info('New sample rate:', sr2, 'Hz');
-  config.sampleRate = sr2;
-  processUpdatedConfig();
+  let sr2 = min(48000, sr1 * (1 + step)) | 0;
+
+  if (is_temp) {
+    let ty = ((sr2 - sr1) / sr1 * 100).toFixed(2);
+    canvas_fft.style.transform = `translateY(${ty}%)`;
+  } else {
+    console.info('New sample rate:', sr2, 'Hz');
+    config.sampleRate = sr2;
+    processUpdatedConfig();
+    resetCanvasTransform();
+  }
 }
 
-async function moveTimeline(step = 0.0) {
+async function moveTimeline(step = 0.0, is_temp = false) {
   if (step == 0.0) return;
   let a = config.timeMin;
   let b = config.timeMax;
-  let a2 = a + (b - a) * step;
-  let b2 = b + (b - a) * step;
-  config.timeMin = a2;
-  config.timeMax = b2;
-  await computeSpectrogram();
+  let a2 = a + (b - a) * -step;
+  let b2 = b + (b - a) * -step;
+
+  if (is_temp) {
+    let tx = (step * 100).toFixed(2);
+    canvas_fft.style.transform = `translateX(${tx}%)`;
+  } else {
+    config.timeMin = a2;
+    config.timeMax = b2;
+    await computeSpectrogram();
+    resetCanvasTransform();
+  }
+}
+
+function resetCanvasTransform() {
+  canvas_fft.style.transform = '';
 }
 
 async function zoomTimeline(zoom = 1.0) {
@@ -528,36 +556,45 @@ function initMouseHandlers() {
     selecting: (x, y, w, h) => selectArea(false, x, y, w, h),
   });
 
-  attachMouseHandlers(canvas_fft, {
-    hmove: (dx) => schedule(moveTimeline, [-dx]),
+  attachMouseHandlers(div_mover, {
+    hmove: (dx) => schedule(moveTimeline, [dx]),
     vmove: (dy) => schedule(moveFreqsRange, [dy]),
+    hmoving: (dx) => schedule(moveTimeline, [dx, true]),
+    vmoving: (dy) => schedule(moveFreqsRange, [dy, true]),
+    reset: () => resetCanvasTransform(),
     hzoom: (zoom) => schedule(zoomTimeline, [zoom]),
   });
 }
 
-function attachMouseHandlers(canvas, handlers) {
+function attachMouseHandlers(element, handlers) {
   let x1 = 0, y1 = 0, x2 = 0, y2 = 0;
   let t2_start, t2_end; // 2-touch zoom on phones
 
   let touch_xy = (t) => [
     t.clientX - t.target.offsetLeft,
     t.clientY - t.target.offsetTop];
+  let touch_copy = (t) => {
+    let [x, y] = touch_xy(t);
+    let id = t.identifier;
+    return { id, x, y };
+  };
 
   // TouchEvent handlers
-  canvas.ontouchstart = (e) => {
+  element.ontouchstart = (e) => {
     e.preventDefault();
     let touches = e.changedTouches;
     if (touches.length == 1)
       [x1, y1] = touch_xy(touches[0]);
     else if (touches.length == 2)
-      t2_start = touches;
+      t2_start = touches.map(touch_copy);
   };
-  canvas.ontouchcancel = (e) => {
+  element.ontouchcancel = (e) => {
     e.preventDefault();
     x1 = y1 = 0;
     t2_start = null;
+    handlers.reset?.();
   };
-  canvas.ontouchmove = (e) => {
+  element.ontouchmove = (e) => {
     e.preventDefault();
     let touches = e.changedTouches;
     if (touches.length == 1) {
@@ -565,41 +602,44 @@ function attachMouseHandlers(canvas, handlers) {
       reportState(false);
     }
   };
-  canvas.ontouchend = (e) => {
+  element.ontouchend = (e) => {
     e.preventDefault();
     let touches = e.changedTouches;
     if (touches.length == 1) {
       [x2, y2] = touch_xy(touches[0]);
       reportState(true);
     } else if (touches.length == 2) {
-      t2_end = touches;
+      t2_end = touches.map(touch_copy);
+      if (t2_end[0].id != t2_start[0].id)
+        t2_end = t2_end.reverse();
       reportState(true);
     }
   };
 
   // MouseEvent handlers
-  canvas.onmousewheel = (e) => {
+  element.onmousewheel = (e) => {
     e.preventDefault();
     if (actions.length > 0) return;
     let zoom = 2 ** sign(e.deltaY);
     handlers.hzoom?.(zoom);
   };
-  canvas.onmousedown = (e) => {
+  element.onmousedown = (e) => {
     e.preventDefault();
     x1 = e.offsetX;
     y1 = e.offsetY;
   };
-  canvas.onmouseout = (e) => {
+  element.onmouseout = (e) => {
     e.preventDefault();
     x1 = y1 = 0;
+    handlers.reset?.();
   };
-  canvas.onmousemove = (e) => {
+  element.onmousemove = (e) => {
     e.preventDefault();
     x2 = e.offsetX;
     y2 = e.offsetY;
     reportState(false);
   };
-  canvas.onmouseup = (e) => {
+  element.onmouseup = (e) => {
     e.preventDefault();
     x2 = e.offsetX;
     y2 = e.offsetY;
@@ -611,6 +651,8 @@ function attachMouseHandlers(canvas, handlers) {
       return;
 
     if (t2_start) {
+      dcheck(t2_start[0].id == t2_end[0].id);
+      dcheck(t2_start[1].id == t2_end[1].id);
       let a1 = touch_xy(t2_start[0]);
       let a2 = touch_xy(t2_start[1]);
       let b1 = touch_xy(t2_end[0]);
@@ -625,8 +667,8 @@ function attachMouseHandlers(canvas, handlers) {
     if (!x1 && !y1)
       return;
 
-    let cw = canvas.clientWidth;
-    let ch = canvas.clientHeight;
+    let cw = element.clientWidth;
+    let ch = element.clientHeight;
     x2 = clamp(x2, 0, cw);
     y2 = clamp(y2, 0, ch);
     let dx = x2 - x1;
@@ -641,12 +683,18 @@ function attachMouseHandlers(canvas, handlers) {
 
     if (!is_final) {
       handlers.selecting?.(x0, y0, w0, h0);
+      if (w0 > h0)
+        handlers.hmoving?.(dx / cw);
+      else
+        handlers.vmoving?.(dy / ch);
     } else if (!h_move && !v_move) {
       handlers.point?.(x1 / cw, y1 / ch);
     } else {
-      handlers.hmove?.(dx / cw);
-      handlers.vmove?.(dy / ch);
       handlers.select?.(x0, y0, w0, h0);
+      if (w0 > h0)
+        handlers.hmove?.(dx / cw);
+      else
+        handlers.vmove?.(dy / ch);
     }
 
     if (is_final)

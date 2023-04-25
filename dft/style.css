@@ -1,12 +1,13 @@
 body {
   margin: 0;
   font-family: monospace;
-  font-size: xxx-large;
+  font-size: xx-large;
   color: #fff;
   background: #000;
 }
 
 canvas#spectrogram {
+  z-index: 0;
   position: fixed;
   left: 5%;
   top: 5%;
@@ -15,8 +16,18 @@ canvas#spectrogram {
   background: #000;
 }
 
-canvas#overlay {
+#mover {
   z-index: 2;
+  position: fixed;
+  left: 5%;
+  top: 5%;
+  width: 90%;
+  height: 90%;
+  background: transparent;
+}
+
+canvas#overlay {
+  z-index: 3;
   position: fixed;
   left: 5%;
   top: 5%;
@@ -62,7 +73,7 @@ canvas#timespan {
 }
 
 #middle {
-  z-index: 2;
+  z-index: 4;
   position: fixed;
   width: 100%;
   top: 50%;
@@ -75,7 +86,7 @@ canvas#timespan {
 }
 
 #buttons {
-  z-index: 3;
+  z-index: 5;
   position: fixed;
   top: 5%;
   left: 5%;
