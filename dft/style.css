@@ -94,10 +94,10 @@ canvas#timespan {
 
 button {
   font-size: xx-large;
-  padding: 0.5em;
-  color: #080;
-  border: 3px solid #080;
-  background: #000;
+  color: #000;
+  background: #080;
+  border: none;
+  outline: none;
   cursor: pointer;
   user-select: none;
 }
@@ -107,8 +107,7 @@ button:focus {
 }
 
 button.disabled {
-  border-color: #888;
-  color: #888;
+  background: #888;
 }
 
 html > body > .dg.ac {

@@ -25,6 +25,7 @@ let audio_signal = null;
 let spectrogram = null;
 let selected_area = null;
 let playing_sound = null;
+let mic_stream = null;
 // let db_log = (s) => clamp(log10(s) / config.dbRange + 1); // 0.001..1 -> -3..0 -> 0..1
 let db_log = (a2) => a2 ** (0.5 / config.dbRange); // 0.001..1 -> 0.1..1
 let rgb_fn = (db) => [db * 9.0, db * 3.0, db * 1.0];
@@ -39,7 +40,7 @@ function init() {
   $('#play').onclick = () => schedule(playSelectedArea);
   $('#save').onclick = () => schedule(saveSelectedArea);
   $('#grid').onclick = () => schedule(toggleGridMode);
-  $('#reset').onclick = () => schedule(resetView);
+  $('#reset').onclick = () => stopCurrentAction();
   toggleGridMode();
   initMouseHandlers();
   initDatGUI();
@@ -125,37 +126,31 @@ async function decodeAudioFile() {
 
 async function recordAudio() {
   await showStatus('Requesting mic access');
-  let onclick = $('#record').onclick;
-  let stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  mic_stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-  try {
-    await showStatus('Initializing MediaRecorder');
-    let recorder = new MediaRecorder(stream, {
-      mimeType: 'audio/webm;codecs=opus',
-      audioBitsPerSecond: config.audioKbps * 1000 | 0,
-    });
+  await showStatus('Initializing MediaRecorder');
+  let recorder = new MediaRecorder(mic_stream, {
+    mimeType: 'audio/webm;codecs=opus',
+    audioBitsPerSecond: config.audioKbps * 1000 | 0,
+  });
 
-    let chunks = [];
-    recorder.ondataavailable = async (e) => {
-      chunks.push(e.data);
-      audio_file = new Blob(chunks, { type: recorder.mimeType });
-      config.timeMin = 0;
-      config.timeMax = 0;
-      await decodeAudioFile();
-    };
+  let chunks = [];
+  recorder.ondataavailable = async (e) => {
+    chunks.push(e.data);
+    audio_file = new Blob(chunks, { type: recorder.mimeType });
+    config.timeMin = 0;
+    config.timeMax = 0;
+    await decodeAudioFile();
+  };
 
-    await showStatus('Recording...');
-    recorder.start();
+  await showStatus('Recording...');
+  recorder.start();
+}
 
-    $('#record').innerText = 'Stop';
-    await new Promise((resolve) =>
-      $('#record').onclick = resolve);
-  } finally {
-    $('#record').innerText = 'Record';
-    $('#record').onclick = onclick;
-    console.info('Releasing mic'); // this will stop the recorder
-    stream.getTracks().map((t) => t.stop());
-  }
+function stopRecording() {
+  console.info('Releasing mic'); // this will stop the recorder
+  mic_stream.getTracks().map((t) => t.stop());
+  mic_stream = null;
 }
 
 function getAudioWindow() {
@@ -502,7 +497,6 @@ async function playSound(signal = audio_signal) {
     playing_sound = { ctx, src };
     drawPlaybackProgress();
     src.start();
-    $('#play').innerText = 'Stop';
     await new Promise((resolve) => src.onended = resolve);
     console.debug('Sound playback ended');
     await showStatus('');
@@ -510,7 +504,6 @@ async function playSound(signal = audio_signal) {
     ctx.close();
     playing_sound = null;
     showStatus('');
-    $('#play').innerText = 'Play';
   }
 }
 
@@ -700,4 +693,13 @@ function attachMouseHandlers(element, handlers) {
     if (is_final)
       x1 = y1 = 0;
   }
+}
+
+function stopCurrentAction() {
+  if (playing_sound)
+    stopSound();
+  else if (mic_stream)
+    stopRecording();
+  else if (audio_signal)
+    resetView();
 }
