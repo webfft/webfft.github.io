@@ -92,6 +92,27 @@ export function drawSpectrogram(canvas, spectrogram, {
   ctx.putImageData(img, 0, 0);
 }
 
+export function getMaskedSpectrogram(spectrogram1, mask_fn) {
+  dcheck(is_spectrogram(spectrogram1));
+  let dims = spectrogram1.dimensions.slice(0);
+  let [t_size, f_size] = dims;
+  let data = new Float32Array(t_size * f_size * 2);
+  let spectrogram2 = new Float32Tensor(dims, data);
+
+  for (let t = 0; t < t_size; t++) {
+    let frame1 = spectrogram1.subtensor(t).array;
+    let frame2 = spectrogram2.subtensor(t).array;
+
+    for (let f = 0; f < f_size; f++) {
+      let m = mask_fn(t, f);
+      frame2[2 * f + 0] = m * frame1[2 * f + 0];
+      frame2[2 * f + 1] = m * frame1[2 * f + 1];
+    }
+  }
+
+  return spectrogram2;
+}
+
 export function getFrameMax(data) {
   return aggFrameData(data, reim2, Math.max, 0);
 }

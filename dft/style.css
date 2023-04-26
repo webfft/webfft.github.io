@@ -1,74 +1,61 @@
 body {
   margin: 0;
   font-family: monospace;
-  font-size: xx-large;
+  font-size: xxx-large;
   color: #fff;
-  background: #000;
-}
-
-canvas#spectrogram {
-  z-index: 0;
-  position: fixed;
-  left: 5%;
-  top: 5%;
-  width: 90%;
-  height: 90%;
   background: #000;
 }
 
 #mover {
   z-index: 2;
-  position: fixed;
-  left: 5%;
-  top: 5%;
-  width: 90%;
-  height: 90%;
-  background: transparent;
 }
 
 canvas#overlay {
   z-index: 3;
-  position: fixed;
-  left: 5%;
-  top: 5%;
+}
+
+#spectrogram, #mover, #overlay {
+  left: 10%;
+  top: 0;
   width: 90%;
   height: 90%;
+  position: fixed;
   background: transparent;
 }
 
-canvas#volumes {
-  position: fixed;
-  left: 95%;
-  top: 5%;
+canvas#ampdensity {
+  left: 0;
+  top: 0;
   width: 5%;
   height: 90%;
+  position: fixed;
   background: #000;
 }
 
 canvas#spectrum {
-  position: fixed;
-  left: 0;
-  top: 5%;
+  left: 5%;
+  top: 0;
   width: 5%;
   height: 90%;
+  position: fixed;
   background: #000;
 }
 
 canvas#timeline {
-  position: fixed;
-  left: 5%;
-  bottom: 0;
+  left: 10%;
+  bottom: 5%;
   width: 90%;
   height: 5%;
+  position: fixed;
   background: #000;
 }
 
 canvas#timespan {
-  position: fixed;
-  left: 5%;
-  top: 0;
+  left: 10%;
+  bottom: 0;
   width: 90%;
   height: 5%;
+  position: fixed;
   background: #000;
 }
 
@@ -88,12 +75,15 @@ canvas#timespan {
 #buttons {
   z-index: 5;
   position: fixed;
-  top: 5%;
-  left: 5%;
+  left: 0;
+  top: 0;
+  padding: 0.5em;
 }
 
 button {
-  font-size: xx-large;
+  width: 2em;
+  height: 2em;
+  font-size: xxx-large;
   color: #000;
   background: #080;
   border: none;
@@ -104,6 +94,10 @@ button {
 
 button:focus {
   outline: none;
+}
+
+button.selected {
+  outline: 2px solid #0f0;
 }
 
 button.disabled {

@@ -10,7 +10,7 @@ let canvas_overlay = $('#overlay');
 let canvas_spectrum = $('#spectrum');
 let canvas_timeline = $('#timeline');
 let canvas_timespan = $('#timespan');
-let canvas_volumes = $('#volumes');
+let canvas_ampdensity = $('#ampdensity');
 let actions = [];
 let timer = 0;
 let config = {}, prev_config = {};
@@ -23,6 +23,7 @@ config.timeMax = 0; // sec
 let audio_file = null;
 let audio_signal = null;
 let spectrogram = null;
+let sub_spectrogram = null;
 let selected_area = null;
 let playing_sound = null;
 let mic_stream = null;
@@ -41,12 +42,14 @@ function init() {
   $('#save').onclick = () => schedule(saveSelectedArea);
   $('#grid').onclick = () => schedule(toggleGridMode);
   $('#reset').onclick = () => stopCurrentAction();
+  canvas_overlay.style.display = 'none';
   toggleGridMode();
   initMouseHandlers();
   initDatGUI();
 }
 
 function initDatGUI() {
+  gui.close();
   gui.add(config, 'sampleRate', 4000, 48000, 1000).name('Hz').onFinishChange(processUpdatedConfig);
   gui.add(config, 'frameSize', 256, 4096, 256).name('N').onFinishChange(processUpdatedConfig);
   gui.add(config, 'dbRange', 0.25, 5, 0.25).name('dB').onFinishChange(processUpdatedConfig);
@@ -182,7 +185,6 @@ function moveFreqsRange(step = 0, is_temp = false) {
     console.info('New sample rate:', sr2, 'Hz');
     config.sampleRate = sr2;
     processUpdatedConfig();
-    resetCanvasTransform();
   }
 }
 
@@ -200,7 +202,6 @@ async function moveTimeline(step = 0.0, is_temp = false) {
     config.timeMin = a2;
     config.timeMax = b2;
     await computeSpectrogram();
-    resetCanvasTransform();
   }
 }
 
@@ -241,12 +242,11 @@ async function computeSpectrogram() {
 
 function drawSpectrogram() {
   utils.drawSpectrogram(canvas_fft, spectrogram, { db_log, rgb_fn });
-
-  let vol_timeline = utils.getVolumeTimeline(spectrogram);
+  resetCanvasTransform();
 
   drawTimespanView(canvas_timespan);
   drawAvgSpectrum();
-  drawVolumeTimeline(canvas_timeline, vol_timeline);
+  drawVolumeTimeline();
   drawAmpDensity();
 }
 
@@ -273,7 +273,7 @@ function drawTimespanView(canvas) {
   ctx.fillRect(rx, ry, rw, rh);
 }
 
-function drawAmpDensity(canvas = canvas_volumes) {
+function drawAmpDensity(canvas = canvas_ampdensity) {
   let cw = canvas.width;
   let ch = canvas.height;
   let ctx = canvas.getContext('2d');
@@ -302,15 +302,44 @@ function drawAmpDensity(canvas = canvas_volumes) {
   ctx.putImageData(img, 0, 0);
 }
 
-function drawAvgSpectrum(canvas = canvas_spectrum) {
+function getSelectedSpectrogram() {
+  if (!selected_area)
+    return spectrogram;
+
+  let aw = getAudioWindow();
+  let sr = config.sampleRate;
+  let t_len = aw.length;
+  let f_len = sr / 2;
+  let [num_frames, num_freqs] = spectrogram.dimensions;
+  let { t1, t2, f1, f2 } = selected_area || { t1: 0, t2: t_len, f1: 0, f2: f_len };
+  let frame1 = t1 / t_len * num_frames | 0;
+  let frame2 = t2 / t_len * num_frames | 0;
+  let freq1 = f1 / sr * num_freqs | 0;
+  let freq2 = f2 / sr * num_freqs | 0;
+
+  console.debug('Creating sub-spectrogram:',
+    't=' + frame1 + '..' + frame2,
+    'f=' + freq1 + '..' + freq2);
+
+  return utils.getMaskedSpectrogram(spectrogram, (t, f) => {
+    let f_abs = min(f, num_freqs - f);
+    if (t < frame1 || t > frame2) return 0;
+    if (f_abs < freq1 || f_abs > freq2) return 0;
+    return 1;
+  });
+}
+
+function drawAvgSpectrum() {
+  let canvas = canvas_spectrum;
   let cw = canvas.width;
   let ch = canvas.height;
   let ctx = canvas.getContext('2d');
   let img = ctx.getImageData(0, 0, cw, ch);
-  let avg_spectrum = utils.getAvgSpectrum(spectrogram);
+  let avg_spectrum = utils.getAvgSpectrum(sub_spectrogram || spectrogram);
   let abs_max = avg_spectrum.reduce((s, x) => max(s, x), 0);
 
   img.data.fill(0);
+
   for (let y = 0; y < ch; y++) {
     for (let x = 0; x < cw; x++) {
       let f = (ch - 1 - y) / ch * avg_spectrum.length / 2 | 0;
@@ -329,14 +358,16 @@ function drawAvgSpectrum(canvas = canvas_spectrum) {
   ctx.putImageData(img, 0, 0);
 }
 
-function drawVolumeTimeline(canvas, vol_timeline) {
+function drawVolumeTimeline() {
+  let canvas = canvas_timeline;
   let cw = canvas.width;
   let ch = canvas.height;
   let ctx = canvas.getContext('2d');
   let img = ctx.getImageData(0, 0, cw, ch);
-  img.data.fill(0);
-
+  let vol_timeline = utils.getVolumeTimeline(sub_spectrogram || spectrogram);
   let vol_max = vol_timeline.reduce((s, x) => max(s, x), 0);
+
+  img.data.fill(0);
 
   for (let x = 0; x < cw; x++) {
     for (let y = 0; y < ch; y++) {
@@ -385,13 +416,13 @@ function drawPointTag(x0, y0) {
   ctx.fill();
 }
 
-async function selectArea(is_final, dx, dy, dw, dh) {
+async function selectArea([dx, dy, dw, dh], is_final = true) {
   let sr = config.sampleRate;
-  let aw = sr * (config.timeMax - config.timeMin);
-  let t1 = dx * aw | 0;
-  let t2 = (dx + dw) * aw | 0;
-  let f2 = (1 - dy) * sr / 2 | 0;
-  let f1 = (1 - dy - dh) * sr / 2 | 0;
+  let len = sr * (config.timeMax - config.timeMin);
+  let t1 = dx * len | 0;                // index
+  let t2 = (dx + dw) * len | 0;         // index
+  let f2 = (1 - dy) * sr / 2 | 0;       // Hz
+  let f1 = (1 - dy - dh) * sr / 2 | 0;  // Hz
 
   selected_area = { t1, t2, f1, f2, dx, dy, dw, dh };
   drawSelectedArea();
@@ -400,6 +431,10 @@ async function selectArea(is_final, dx, dy, dw, dh) {
   let t_span = (t1 / sr).toFixed(2) + '..' + (t2 / sr).toFixed(2) + ' s';
   let f_span = f1 + '..' + f2 + ' Hz';
   console.info('Selected sound:', t_span, 'x', f_span);
+
+  sub_spectrogram = getSelectedSpectrogram();
+  drawAvgSpectrum();
+  drawVolumeTimeline();
 }
 
 function drawSelectedArea(area = selected_area, vline_dx = 0) {
@@ -533,11 +568,14 @@ async function stopSound() {
 }
 
 function toggleGridMode() {
-  $('#grid').classList.toggle('disabled');
+  $('#grid').classList.toggle('selected');
   let css = canvas_overlay.style;
   css.display = css.display == 'none' ? '' : 'none';
   if (css.display == 'none') {
     selected_area = null;
+    sub_spectrogram = null;
+    drawAvgSpectrum();
+    drawVolumeTimeline();
     drawSelectedArea();
   }
 }
@@ -545,8 +583,8 @@ function toggleGridMode() {
 function initMouseHandlers() {
   attachMouseHandlers(canvas_overlay, {
     point: (x, y) => schedule(drawPointTag, [x, y]),
-    select: (x, y, w, h) => selectArea(true, x, y, w, h),
-    selecting: (x, y, w, h) => selectArea(false, x, y, w, h),
+    select: (x, y, w, h) => selectArea([x, y, w, h], true),
+    selecting: (x, y, w, h) => selectArea([x, y, w, h], false),
   });
 
   attachMouseHandlers(div_mover, {
@@ -623,8 +661,10 @@ function attachMouseHandlers(element, handlers) {
   };
   element.onmouseout = (e) => {
     e.preventDefault();
-    x1 = y1 = 0;
-    handlers.reset?.();
+    if (!x1 && !y1) return;
+    x2 = e.offsetX;
+    y2 = e.offsetY;
+    reportState(true);
   };
   element.onmousemove = (e) => {
     e.preventDefault();
