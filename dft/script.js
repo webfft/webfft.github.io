@@ -20,6 +20,8 @@ config.dbRange = 1.5; // log10(re^2+im^2)
 config.audioKbps = 128;
 config.timeMin = 0; // sec
 config.timeMax = 0; // sec
+let minSampleRate = 0;
+let maxSampleRate = 0;
 let audio_file = null;
 let audio_signal = null;
 let spectrogram = null;
@@ -85,7 +87,7 @@ function showStatus(...args) {
 
 function processUpdatedConfig() {
   config.frameSize = 2 ** (log2(config.frameSize) | 0);
-  config.sampleRate = (config.sampleRate / 1000 | 0) * 1000;
+  config.sampleRate = clamp((config.sampleRate / 1000 | 0) * 1000, minSampleRate, maxSampleRate);
   config.timeMin = (config.timeMin * 100 | 0) / 100;
   config.timeMax = (config.timeMax * 100 | 0) / 100;
 
@@ -124,6 +126,7 @@ async function openFile() {
 }
 
 async function decodeAudioFile() {
+  initMinMaxSampleRate();
   let sr = config.sampleRate;
   let size_kb = (audio_file.size / 1024).toFixed(0);
   await showStatus('Decoding audio:', size_kb, 'KB @', sr, 'Hz');
@@ -778,3 +781,45 @@ function stopCurrentAction() {
   else if (audio_signal)
     resetView();
 }
+
+function findMinMaxSampleRate() {
+  let is_supported = (khz) => {
+    try {
+      console.debug('Testing sample rate:', khz, 'kHz');
+      new AudioContext({ sampleRate: khz * 1000 }).close();
+      return true;
+    } catch (err) {
+      return false;
+    }
+  };
+
+  let find_boundary = (a, b) => {
+    let sa = is_supported(a);
+    let sb = is_supported(b);
+
+    dcheck(sa != sb);
+
+    while (a + 1 < b) {
+      let c = (a + b) >> 1;
+      let sc = is_supported(c);
+      if (sa == sc)
+        [a, sa] = [c, sc];
+      else
+        [b, sb] = [c, sc];
+    }
+
+    return [a, b];
+  };
+
+  let sr_max = find_boundary(32, 1024);
+  let sr_min = find_boundary(1, 32);
+
+  return [sr_min[1] * 1000, sr_max[0] * 1000];
+}
+
+function initMinMaxSampleRate() {
+  if (maxSampleRate) return;
+  [minSampleRate, maxSampleRate] = findMinMaxSampleRate();
+  console.info('Supported sample rates:', minSampleRate + '..' + maxSampleRate, 'Hz');
+}
+
