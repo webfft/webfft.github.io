@@ -15,45 +15,47 @@ canvas#overlay {
 }
 
 #spectrogram, #mover, #overlay {
-  left: 10%;
+  left: 5%;
   top: 0;
-  width: 90%;
-  height: 90%;
+  width: 95%;
+  height: 95%;
   position: fixed;
   background: transparent;
 }
 
 canvas#ampdensity {
+  display: none;
   left: 0;
   top: 0;
   width: 5%;
-  height: 90%;
+  height: 95%;
   position: fixed;
   background: #000;
 }
 
 canvas#spectrum {
-  left: 5%;
+  left: 0;
   top: 0;
   width: 5%;
-  height: 90%;
+  height: 95%;
   position: fixed;
   background: #000;
 }
 
 canvas#timeline {
-  left: 10%;
-  bottom: 5%;
-  width: 90%;
+  left: 5%;
+  bottom: 0;
+  width: 95%;
   height: 5%;
   position: fixed;
   background: #000;
 }
 
 canvas#timespan {
-  left: 10%;
+  display: none;
+  left: 5%;
   bottom: 0;
-  width: 90%;
+  width: 95%;
   height: 5%;
   position: fixed;
   background: #000;
@@ -78,14 +80,22 @@ canvas#timespan {
   left: 0;
   top: 0;
   padding: 0.5em;
+  user-select: none;
+}
+
+@media (orientation: portrait) {
+  #buttons {
+    width: 2em;
+  }
 }
 
 button {
   width: 2em;
   height: 2em;
+  margin-bottom: 0.5em;
   font-size: xxx-large;
   color: #000;
-  background: #080;
+  background: #420;
   border: none;
   outline: none;
   cursor: pointer;

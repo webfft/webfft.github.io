@@ -1,7 +1,7 @@
 import * as utils from '../utils.js';
 
 const { PI, abs, min, max, sign, ceil, floor, log2, log10 } = Math;
-const { $, clamp, dcheck } = utils;
+const { $, mix, clamp, dcheck } = utils;
 
 let gui = new dat.GUI({ name: 'Config' });
 let canvas_fft = $('#spectrogram');
@@ -86,10 +86,14 @@ function showStatus(...args) {
 function processUpdatedConfig() {
   config.frameSize = 2 ** (log2(config.frameSize) | 0);
   config.sampleRate = (config.sampleRate / 1000 | 0) * 1000;
+  config.timeMin = (config.timeMin * 100 | 0) / 100;
+  config.timeMax = (config.timeMax * 100 | 0) / 100;
 
   if (config.sampleRate != prev_config.sampleRate)
     schedule(decodeAudioFile);
   else if (config.frameSize != prev_config.frameSize)
+    schedule(computeSpectrogram);
+  else if (config.timeMin != prev_config.timeMin || config.timeMax != prev_config.timeMax)
     schedule(computeSpectrogram);
   else if (config.dbRange != prev_config.dbRange)
     schedule(drawSpectrogram);
@@ -111,9 +115,11 @@ async function resetView() {
 async function openFile() {
   let file = await utils.selectAudioFile();
   if (!file) return;
+  document.title = file.name;
   audio_file = file;
   config.timeMin = 0;
   config.timeMax = 0;
+  config.sampleRate = 48000;
   await decodeAudioFile();
 }
 
@@ -188,7 +194,7 @@ function moveFreqsRange(step = 0, is_temp = false) {
   }
 }
 
-async function moveTimeline(step = 0.0, is_temp = false) {
+function moveTimeline(step = 0.0, is_temp = false) {
   if (step == 0.0) return;
   let a = config.timeMin;
   let b = config.timeMax;
@@ -201,15 +207,31 @@ async function moveTimeline(step = 0.0, is_temp = false) {
   } else {
     config.timeMin = a2;
     config.timeMax = b2;
-    await computeSpectrogram();
+    schedule(computeSpectrogram);
   }
+}
+
+function zoomIntoSelectedArea() {
+  if (!selected_area) return;
+
+  console.info('Zooming into the selected area');
+  let { dx, dy, dw, dh } = selected_area;
+  let t1 = mix(config.timeMin, config.timeMax, dx);
+  let t2 = mix(config.timeMin, config.timeMax, dx + dw);
+  let sr = config.sampleRate * (1 - dy);
+
+  config.timeMin = t1;
+  config.timeMax = t2;
+  config.sampleRate = sr;
+
+  processUpdatedConfig();
 }
 
 function resetCanvasTransform() {
   canvas_fft.style.transform = '';
 }
 
-async function zoomTimeline(zoom = 1.0) {
+function zoomTimeline(zoom = 1.0) {
   if (zoom == 1.0) return;
   let a = config.timeMin;
   let b = config.timeMax;
@@ -217,7 +239,7 @@ async function zoomTimeline(zoom = 1.0) {
   let b2 = (a + b) / 2 + (b - a) / 2 * zoom;
   config.timeMin = a2;
   config.timeMax = b2;
-  await computeSpectrogram();
+  schedule(computeSpectrogram);
 }
 
 async function computeSpectrogram() {
@@ -231,6 +253,8 @@ async function computeSpectrogram() {
   spectrogram = utils.computePaddedSpectrogram(audio_window, num_frames, frame_size);
   drawSpectrogram();
   await showStatus('');
+  selected_area = null;
+  drawSelectedArea();
 
   let _t = audio_window.length;
   let _w = num_frames;
@@ -244,10 +268,10 @@ function drawSpectrogram() {
   utils.drawSpectrogram(canvas_fft, spectrogram, { db_log, rgb_fn });
   resetCanvasTransform();
 
-  drawTimespanView(canvas_timespan);
+  // drawTimespanView(canvas_timespan);
   drawAvgSpectrum();
   drawVolumeTimeline();
-  drawAmpDensity();
+  // drawAmpDensity();
 }
 
 function drawTimespanView(canvas) {
@@ -582,28 +606,29 @@ function toggleGridMode() {
 
 function initMouseHandlers() {
   attachMouseHandlers(canvas_overlay, {
-    point: (x, y) => schedule(drawPointTag, [x, y]),
+    point: (x, y, is_long) => is_long ? zoomIntoSelectedArea() : drawPointTag(x, y),
     select: (x, y, w, h) => selectArea([x, y, w, h], true),
     selecting: (x, y, w, h) => selectArea([x, y, w, h], false),
   });
 
   attachMouseHandlers(div_mover, {
-    hmove: (dx) => schedule(moveTimeline, [dx]),
-    vmove: (dy) => schedule(moveFreqsRange, [dy]),
-    hmoving: (dx) => schedule(moveTimeline, [dx, true]),
-    vmoving: (dy) => schedule(moveFreqsRange, [dy, true]),
+    hmove: (dx) => moveTimeline(dx),
+    vmove: (dy) => moveFreqsRange(dy),
+    hmoving: (dx) => moveTimeline(dx, true),
+    vmoving: (dy) => moveFreqsRange(dy, true),
     reset: () => resetCanvasTransform(),
-    hzoom: (zoom) => schedule(zoomTimeline, [zoom]),
+    hzoom: (zoom) => zoomTimeline(zoom),
   });
 }
 
 function attachMouseHandlers(element, handlers) {
-  let x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+  let x1 = 0, y1 = 0, t1 = 0, x2 = 0, y2 = 0, t2 = 0;
   let t2_start, t2_end; // 2-touch zoom on phones
 
   let touch_xy = (t) => [
     t.clientX - t.target.offsetLeft,
     t.clientY - t.target.offsetTop];
+
   let touch_copy = (t) => {
     let [x, y] = touch_xy(t);
     let id = t.identifier;
@@ -658,24 +683,28 @@ function attachMouseHandlers(element, handlers) {
     e.preventDefault();
     x1 = e.offsetX;
     y1 = e.offsetY;
+    t1 = Date.now();
   };
   element.onmouseout = (e) => {
     e.preventDefault();
     if (!x1 && !y1) return;
     x2 = e.offsetX;
     y2 = e.offsetY;
+    t2 = Date.now();
     reportState(true);
   };
   element.onmousemove = (e) => {
     e.preventDefault();
     x2 = e.offsetX;
     y2 = e.offsetY;
+    t2 = Date.now();
     reportState(false);
   };
   element.onmouseup = (e) => {
     e.preventDefault();
     x2 = e.offsetX;
     y2 = e.offsetY;
+    t2 = Date.now();
     reportState(true);
   };
 
@@ -697,8 +726,7 @@ function attachMouseHandlers(element, handlers) {
       return;
     }
 
-    if (!x1 && !y1)
-      return;
+    if (!t1) return;
 
     let cw = element.clientWidth;
     let ch = element.clientHeight;
@@ -707,6 +735,7 @@ function attachMouseHandlers(element, handlers) {
     let dx = x2 - x1;
     let dy = y2 - y1;
     let eps = 0.05;
+    let long_press = 1000;
     let h_move = abs(dx) / cw > eps;
     let v_move = abs(dy) / ch > eps;
     let x0 = min(x1, x2) / cw;
@@ -721,7 +750,7 @@ function attachMouseHandlers(element, handlers) {
       else
         handlers.vmoving?.(dy / ch);
     } else if (!h_move && !v_move) {
-      handlers.point?.(x1 / cw, y1 / ch);
+      handlers.point?.(x1 / cw, y1 / ch, t2 - t1 > long_press);
     } else {
       handlers.select?.(x0, y0, w0, h0);
       if (w0 > h0)
@@ -731,7 +760,7 @@ function attachMouseHandlers(element, handlers) {
     }
 
     if (is_final)
-      x1 = y1 = 0;
+      t1 = 0;
   }
 }
 

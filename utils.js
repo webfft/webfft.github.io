@@ -3,6 +3,7 @@ import { FFT } from 'https://soundshader.github.io/webfft.js';
 export const $ = (selector) => document.querySelector(selector);
 export const log = (...args) => console.log(args.join(' '));
 export const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+export const mix = (a, b, x) => a * (1 - x) + b * x;
 export const clamp = (x, min = 0, max = 1) => Math.max(Math.min(x, max), min);
 export const hann = (x) => x > 0 && x < 1 ? Math.sin(Math.PI * x) ** 2 : 0;
 export const reim2 = (re, im) => re * re + im * im;
