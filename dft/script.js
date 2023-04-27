@@ -354,6 +354,7 @@ function getSelectedSpectrogram() {
 }
 
 function drawAvgSpectrum() {
+  if (!audio_signal) return;
   let canvas = canvas_spectrum;
   let cw = canvas.width;
   let ch = canvas.height;
@@ -383,6 +384,7 @@ function drawAvgSpectrum() {
 }
 
 function drawVolumeTimeline() {
+  if (!audio_signal) return;
   let canvas = canvas_timeline;
   let cw = canvas.width;
   let ch = canvas.height;
@@ -412,9 +414,8 @@ function drawVolumeTimeline() {
 }
 
 function drawPointTag(x0, y0) {
+  if (!audio_signal) return;
   let audio_window = getAudioWindow();
-  if (!audio_window) return;
-
   let canvas = canvas_overlay;
   let cw = canvas.width;
   let ch = canvas.height;
@@ -441,6 +442,7 @@ function drawPointTag(x0, y0) {
 }
 
 async function selectArea([dx, dy, dw, dh], is_final = true) {
+  if (!audio_signal) return;
   let sr = config.sampleRate;
   let len = sr * (config.timeMax - config.timeMin);
   let t1 = dx * len | 0;                // index
@@ -638,6 +640,7 @@ function attachMouseHandlers(element, handlers) {
   // TouchEvent handlers
   element.ontouchstart = (e) => {
     e.preventDefault();
+    t1 = Date.now();
     let touches = e.changedTouches;
     if (touches.length == 1)
       [x1, y1] = touch_xy(touches[0]);
@@ -646,12 +649,13 @@ function attachMouseHandlers(element, handlers) {
   };
   element.ontouchcancel = (e) => {
     e.preventDefault();
-    x1 = y1 = 0;
+    t1 = 0;
     t2_start = null;
     handlers.reset?.();
   };
   element.ontouchmove = (e) => {
     e.preventDefault();
+    t2 = Date.now();
     let touches = e.changedTouches;
     if (touches.length == 1) {
       [x2, y2] = touch_xy(touches[0]);
@@ -660,6 +664,7 @@ function attachMouseHandlers(element, handlers) {
   };
   element.ontouchend = (e) => {
     e.preventDefault();
+    t2 = Date.now();
     let touches = e.changedTouches;
     if (touches.length == 1) {
       [x2, y2] = touch_xy(touches[0]);
@@ -713,6 +718,7 @@ function attachMouseHandlers(element, handlers) {
       return;
 
     if (t2_start) {
+      console.debug('2 touches:', JSON.stringify(t2_start), JSON.stringify(t2_end));
       dcheck(t2_start[0].id == t2_end[0].id);
       dcheck(t2_start[1].id == t2_end[1].id);
       let a1 = touch_xy(t2_start[0]);

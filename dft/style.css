@@ -84,9 +84,7 @@ canvas#timespan {
 }
 
 @media (orientation: portrait) {
-  #buttons {
-    width: 2em;
-  }
+
 }
 
 button {
@@ -95,7 +93,7 @@ button {
   margin-bottom: 0.5em;
   font-size: xxx-large;
   color: #000;
-  background: #420;
+  background: #48c;
   border: none;
   outline: none;
   cursor: pointer;
@@ -107,7 +105,8 @@ button:focus {
 }
 
 button.selected {
-  outline: 2px solid #0f0;
+  background: #248;
+  color: #fff;
 }
 
 button.disabled {
