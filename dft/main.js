@@ -546,7 +546,7 @@ async function saveSelectedArea() {
   await showStatus('');
 }
 
-async function playSound(signal = audio_signal) {
+async function playSound(signal = getAudioWindow()) {
   let sr = config.sampleRate;
   let duration = signal.length / sr;
   await showStatus('Playing sound:', duration.toFixed(2), 'sec');
