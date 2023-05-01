@@ -6,7 +6,10 @@ const { $, mix, clamp, dcheck } = utils;
 let gui = new dat.GUI({ name: 'Config' });
 let canvas_fft = $('#spectrogram');
 let div_mover = $('#mover');
-let canvas_overlay = $('#overlay');
+let div_sarea = $('#sarea');
+let div_sarea_buttons = $('#sarea_buttons');
+let div_vline = $('#vline');
+let div_overlay = $('#overlay');
 let canvas_spectrum = $('#spectrum');
 let canvas_timeline = $('#timeline');
 let canvas_timespan = $('#timespan');
@@ -32,22 +35,23 @@ let mic_stream = null;
 // let db_log = (s) => clamp(log10(s) / config.dbRange + 1); // 0.001..1 -> -3..0 -> 0..1
 let db_log = (a2) => a2 ** (0.5 / config.dbRange); // 0.001..1 -> 0.1..1
 let rgb_fn = (db) => [db * 9.0, db * 3.0, db * 1.0];
+let pct100 = (x) => (x * 100).toFixed(2) + '%';
 
 window.onload = init;
 window.onerror = (event, source, lineno, colno, error) => showStatus(error);
 window.onunhandledrejection = (event) => showStatus(event.reason);
 
 function init() {
-  $('#open').onclick = () => schedule(openFile);
-  $('#record').onclick = () => schedule(recordAudio);
   $('#play').onclick = () => schedule(playSelectedArea);
   $('#save').onclick = () => schedule(saveSelectedArea);
   $('#grid').onclick = () => schedule(toggleGridMode);
+  $('#zoom').onclick = () => schedule(zoomIntoSelectedArea);
   $('#reset').onclick = () => stopCurrentAction();
-  canvas_overlay.style.display = 'none';
+  div_overlay.style.display = 'none';
   toggleGridMode();
   initMouseHandlers();
   initDatGUI();
+  showStatus('', { 'Record': recordAudio, 'Open': openFile });
 }
 
 function initDatGUI() {
@@ -77,12 +81,21 @@ async function perform() {
   timer = setTimeout(perform, 0);
 }
 
-function showStatus(...args) {
-  let text = args.join(' ');
-  text && console.info(text);
-  $('#status').style.display = text ? '' : 'none';
-  $('#status').innerText = text;
-  return utils.sleep(10);
+function showStatus(text, buttons) {
+  let str = Array.isArray(text) ? text.join(' ') : text + '';
+  str && console.info(str);
+  $('#status').style.display = str || buttons ? '' : 'none';
+  $('#status').innerText = str;
+  if (buttons) {
+    for (let name in buttons) {
+      let handler = buttons[name];
+      let a = document.createElement('a');
+      a.innerText = name;
+      a.onclick = () => { a.onclick = null; handler(); };
+      $('#status').append(a);
+    }
+  }
+  return utils.sleep(15);
 }
 
 function processUpdatedConfig() {
@@ -129,7 +142,7 @@ async function decodeAudioFile() {
   initMinMaxSampleRate();
   let sr = config.sampleRate;
   let size_kb = (audio_file.size / 1024).toFixed(0);
-  await showStatus('Decoding audio:', size_kb, 'KB @', sr, 'Hz');
+  await showStatus(['Decoding audio:', size_kb, 'KB @', sr, 'Hz']);
   audio_signal = await utils.decodeAudioFile(audio_file, sr);
   if (!config.timeMin && !config.timeMax)
     config.timeMax = audio_signal.length / sr;
@@ -155,7 +168,7 @@ async function recordAudio() {
     await decodeAudioFile();
   };
 
-  await showStatus('Recording...');
+  await showStatus('Recording...', { 'Stop': stopRecording });
   recorder.start();
 }
 
@@ -251,7 +264,7 @@ async function computeSpectrogram() {
   let time_min = config.timeMin.toFixed(2);
   let time_max = config.timeMax.toFixed(2);
   let time_span = time_min + '..' + time_max;
-  await showStatus('Computing DFT:', time_span, 'sec @', num_frames, 'x', frame_size);
+  await showStatus(['Computing DFT:', time_span, 'sec @', num_frames, 'x', frame_size]);
   let audio_window = getAudioWindow();
   spectrogram = utils.computePaddedSpectrogram(audio_window, num_frames, frame_size);
   drawSpectrogram();
@@ -270,10 +283,12 @@ async function computeSpectrogram() {
 function drawSpectrogram() {
   utils.drawSpectrogram(canvas_fft, spectrogram, { db_log, rgb_fn });
   resetCanvasTransform();
+  selectArea(null);
+  drawPointTag(0, 0);
 
   // drawTimespanView(canvas_timespan);
-  drawAvgSpectrum();
-  drawVolumeTimeline();
+  // drawAvgSpectrum();
+  // drawVolumeTimeline();
   // drawAmpDensity();
 }
 
@@ -418,75 +433,89 @@ function drawVolumeTimeline() {
 
 function drawPointTag(x0, y0) {
   if (!audio_signal) return;
-  let audio_window = getAudioWindow();
-  let canvas = canvas_overlay;
-  let cw = canvas.width;
-  let ch = canvas.height;
-  let ctx = canvas.getContext('2d');
 
+  if (!x0 && !y0) {
+    $('#point').style.visibility = 'hidden';
+    $('#hztag').style.visibility = 'hidden';
+    return;
+  }
+
+  let signal = getAudioWindow();
   let sr = config.sampleRate;
-  let x = x0 * canvas.width | 0;
-  let y = y0 * canvas.height | 0;
-  let t = (x - 0) / cw * audio_window.length / sr;
-  let f = (ch - 1 - (y - 0)) / ch * sr / 2;
-
+  let t = x0 * signal.length / sr;
+  let f = (1 - y0) * sr / 2;
   let sec = t.toFixed(2) + 's';
   let hz = f.toFixed(0) + ' Hz';
   let text = hz + ' ' + sec;
-  let radius = 5;
 
-  ctx.fillStyle = '#0f0';
-  ctx.font = '18px monospace';
-  ctx.fillText(text, x + 1.5 * radius, y - 1.5 * radius);
+  $('#point').style.visibility = 'visible';
+  $('#point').style.left = pct100(x0);
+  $('#point').style.top = pct100(y0);
 
-  ctx.beginPath();
-  ctx.arc(x, y, radius, 0, 2 * PI, false);
-  ctx.fill();
+  $('#hztag').style.visibility = 'visible';
+  $('#hztag').style.left = pct100(x0);
+  $('#hztag').style.top = pct100(y0);
+  $('#hztag').innerText = text;
 }
 
-async function selectArea([dx, dy, dw, dh], is_final = true) {
-  if (!audio_signal) return;
-  let sr = config.sampleRate;
-  let len = sr * (config.timeMax - config.timeMin);
-  let t1 = dx * len | 0;                // index
-  let t2 = (dx + dw) * len | 0;         // index
-  let f2 = (1 - dy) * sr / 2 | 0;       // Hz
-  let f1 = (1 - dy - dh) * sr / 2 | 0;  // Hz
+async function selectArea(area, is_final = !!area) {
+  if (!audio_signal)
+    return;
 
-  selected_area = { t1, t2, f1, f2, dx, dy, dw, dh };
+  if (!area) {
+    selected_area = null;
+  } else {
+    let [dx, dy, dw, dh] = area;
+    let sr = config.sampleRate;
+    let len = sr * (config.timeMax - config.timeMin);
+    let t1 = dx * len | 0;                // index
+    let t2 = (dx + dw) * len | 0;         // index
+    let f2 = (1 - dy) * sr / 2 | 0;       // Hz
+    let f1 = (1 - dy - dh) * sr / 2 | 0;  // Hz
+
+    selected_area = { t1, t2, f1, f2, dx, dy, dw, dh };
+
+    if (is_final) {
+      let t_span = (t1 / sr).toFixed(2) + '..' + (t2 / sr).toFixed(2) + ' s';
+      let f_span = f1 + '..' + f2 + ' Hz';
+      console.info('Selected sound:', t_span, 'x', f_span);
+    }
+  }
+
   drawSelectedArea();
-  if (!is_final) return;
+  div_sarea_buttons.classList.toggle('final', is_final);
 
-  let t_span = (t1 / sr).toFixed(2) + '..' + (t2 / sr).toFixed(2) + ' s';
-  let f_span = f1 + '..' + f2 + ' Hz';
-  console.info('Selected sound:', t_span, 'x', f_span);
-
-  sub_spectrogram = getSelectedSpectrogram();
-  drawAvgSpectrum();
-  drawVolumeTimeline();
+  if (is_final || !area) {
+    sub_spectrogram = getSelectedSpectrogram();
+    drawAvgSpectrum();
+    drawVolumeTimeline();
+  }
 }
 
 function drawSelectedArea(area = selected_area, vline_dx = 0) {
-  let canvas = canvas_overlay;
-  let cw = canvas.width;
-  let ch = canvas.height;
-  let ctx = canvas.getContext('2d');
-
-  ctx.clearRect(0, 0, cw, ch);
-  ctx.strokeStyle = '#0f0';
-  ctx.lineWidth = 2;
-
   let { dx, dy, dw, dh } = area || { dx: 0, dy: 0, dw: 1, dh: 1 };
 
-  if (area)
-    ctx.strokeRect(dx * cw, dy * ch, dw * cw, dh * ch);
+  if (area) {
+    div_sarea.style.left = pct100(dx);
+    div_sarea.style.top = pct100(dy);
+    div_sarea.style.width = pct100(dw);
+    div_sarea.style.height = pct100(dh);
+    div_sarea.style.visibility = 'visible';
+    div_sarea_buttons.style.left = pct100(mix(0.05, 1.00, dx));
+    div_sarea_buttons.style.top = pct100(mix(0.00, 0.95, dy));
+    drawPointTag(dx + dw, dy + dh);
+  } else {
+    div_sarea.style.visibility = 'hidden';
+  }
 
   if (vline_dx > 0) {
-    let x0 = dx + dw * vline_dx;
-    ctx.beginPath();
-    ctx.moveTo(cw * x0, ch * dy);
-    ctx.lineTo(cw * x0, ch * (dy + dh));
-    ctx.stroke();
+    div_vline.style.left = pct100(dx);
+    div_vline.style.top = pct100(dy);
+    div_vline.style.width = pct100(dw * vline_dx);
+    div_vline.style.height = pct100(dh);
+    div_vline.style.visibility = 'visible';
+  } else {
+    div_vline.style.visibility = 'hidden';
   }
 }
 
@@ -549,7 +578,7 @@ async function saveSelectedArea() {
 async function playSound(signal = getAudioWindow()) {
   let sr = config.sampleRate;
   let duration = signal.length / sr;
-  await showStatus('Playing sound:', duration.toFixed(2), 'sec');
+  await showStatus(['Playing sound:', duration.toFixed(2), 'sec'], { 'Stop': stopSound });
   let ctx = new AudioContext({ sampleRate: sr });
 
   try {
@@ -563,7 +592,6 @@ async function playSound(signal = getAudioWindow()) {
     src.start();
     await new Promise((resolve) => src.onended = resolve);
     console.debug('Sound playback ended');
-    await showStatus('');
   } finally {
     ctx.close();
     playing_sound = null;
@@ -583,6 +611,7 @@ function drawPlaybackProgress() {
   let timer = setInterval(() => {
     if (!playing_sound) {
       clearInterval(timer);
+      drawSelectedArea(selected_area);
       console.debug('Stopped playback timer');
       return;
     }
@@ -598,11 +627,12 @@ async function stopSound() {
 
 function toggleGridMode() {
   $('#grid').classList.toggle('selected');
-  let css = canvas_overlay.style;
+  let css = div_overlay.style;
   css.display = css.display == 'none' ? '' : 'none';
   if (css.display == 'none') {
     selected_area = null;
     sub_spectrogram = null;
+    drawPointTag(0, 0);
     drawAvgSpectrum();
     drawVolumeTimeline();
     drawSelectedArea();
@@ -610,8 +640,8 @@ function toggleGridMode() {
 }
 
 function initMouseHandlers() {
-  attachMouseHandlers(canvas_overlay, {
-    point: (x, y, is_long) => is_long ? zoomIntoSelectedArea() : drawPointTag(x, y),
+  attachMouseHandlers(div_overlay, {
+    point: (x, y) => drawPointTag(x, y),
     select: (x, y, w, h) => selectArea([x, y, w, h], true),
     selecting: (x, y, w, h) => selectArea([x, y, w, h], false),
   });

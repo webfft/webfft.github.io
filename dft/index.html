@@ -6,8 +6,20 @@
 
 <body>
   <canvas id="spectrogram" width="1024" height="1024"></canvas>
-  <div id="mover"></div>
-  <canvas id="overlay" width="1024" height="1024"></canvas>
+
+  <div id="mover">
+    <div id="sarea"></div>
+    <div id="vline"></div>
+    <div id="hztag"></div>
+    <div id="point"></div>
+  </div>
+  <div id="overlay"></div>
+
+  <div id="sarea_buttons">
+    <button id="play"><span>&#x25ba;</span><span>Play</span></button>
+    <button id="save"><span>&#x2b07;</span><span>Save</span></button>
+    <button id="zoom"><span>+</span><span>Zoom</span></button>
+  </div>
 
   <canvas id="spectrum" width="64" height="1024"></canvas>
   <canvas id="timeline" width="1024" height="64"></canvas>
@@ -16,17 +28,14 @@
 
   <div id="middle">
     <div id="status" style="display:none"></div>
-    <div id="buttons">
-      <button id="open" title="Open">&#x2b06;</button>
-      <button id="record" title="Record" style="color:#800">&#x25cf;</button>
-      <button id="reset" title="Reset" style="color:#800">&#x25a0;</button>
-      <button id="play" title="Play">&#x25ba;</button>
-      <button id="grid" title="Select">&#x205c;</button>
-      <button id="save" title="Save">&#x2b07;</button>
-    </div>
+  </div>
+
+  <div id="buttons">
+    <button id="reset"><span>&#x25a0;</span><span>Reset</span></button>
+    <button id="grid"><span>&#x205c;</span><span>Select</span></button>
   </div>
 
   <script src="/dat.gui.js"></script>
-  <script src="script.js"
+  <script src="main.js"
           type="module"></script>
 </body>

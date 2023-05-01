@@ -1,26 +1,76 @@
 body {
   margin: 0;
+  overflow: hidden;
   font-family: monospace;
   font-size: xxx-large;
   color: #fff;
   background: #000;
 }
 
-#mover {
-  z-index: 2;
-}
-
-canvas#overlay {
-  z-index: 3;
-}
-
-#spectrogram, #mover, #overlay {
+#spectrogram, #mover, #overlay, #sarea_buttons {
   left: 5%;
   top: 0;
   width: 95%;
   height: 95%;
   position: fixed;
   background: transparent;
+}
+
+#mover {
+  z-index: 2;
+  position: relative;
+}
+
+#sarea, #vline {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  outline: 1px solid #0f0;
+  visibility: hidden;
+}
+
+#sarea_buttons button {
+  font-size: 0.5em;
+}
+
+#sarea_buttons {
+  z-index: 5;
+  width: auto;
+  height: auto;
+  transform: translateY(-100%);
+  gap: 0.1em;
+  padding-bottom: 0.1em;
+  display: none;
+}
+
+#sarea_buttons.final {
+  display: flex;
+}
+
+#point, #hztag {
+  position: absolute;
+  visibility: hidden;
+}
+
+#point {
+  border: 0.1em solid #0f0;
+  border-radius: 0.1em;
+  transform: translate(-50%, -50%);
+}
+
+#hztag {
+  background: #000;
+  color: #0f0;
+  border: 1px solid #0f0;
+  padding: 0.5em;
+  font-size: 0.5em;
+  white-space: nowrap;
+}
+
+#overlay {
+  z-index: 3;
 }
 
 canvas#ampdensity {
@@ -74,30 +124,45 @@ canvas#timespan {
   padding: 0.25em;
 }
 
+#status a {
+  text-decoration: underline;
+  cursor: pointer;
+  margin-left: 1em;
+}
+
 #buttons {
   z-index: 5;
   position: fixed;
   left: 0;
   top: 0;
-  padding: 0.5em;
-  user-select: none;
+  padding: 0.1em;
 }
 
-@media (orientation: portrait) {
-
-}
-
-button {
+#buttons button {
   width: 2em;
   height: 2em;
-  margin-bottom: 0.5em;
   font-size: xxx-large;
-  color: #000;
-  background: #48c;
-  border: none;
-  outline: none;
+}
+
+@media (orientation: portrait) {}
+
+button {
+  color: #080;
+  background: #000;
+  border: 1px solid #0f0;
   cursor: pointer;
   user-select: none;
+}
+
+button:hover {
+  border-color: #0f0;
+  color: #0f0;
+}
+
+button span:last-child {
+  display: block;
+  font-size: 0.4em;
+  color: #0f0;
 }
 
 button:focus {
@@ -105,14 +170,14 @@ button:focus {
 }
 
 button.selected {
-  background: #248;
-  color: #fff;
+  border-color: #0f0;
+  color: #0f0;
 }
 
 button.disabled {
   background: #888;
 }
 
-html > body > .dg.ac {
+html>body>.dg.ac {
   z-index: 4;
 }
