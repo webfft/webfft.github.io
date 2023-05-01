@@ -27,12 +27,12 @@ body {
   top: 0;
   right: 0;
   bottom: 0;
-  outline: 1px solid #0f0;
+  border: 2px solid #0f0;
   visibility: hidden;
 }
 
 #sarea_buttons button {
-  font-size: 0.5em;
+  font-size: 0.75em;
 }
 
 #sarea_buttons {
@@ -40,8 +40,8 @@ body {
   width: auto;
   height: auto;
   transform: translateY(-100%);
-  gap: 0.1em;
-  padding-bottom: 0.1em;
+  gap: 0.25em;
+  padding-bottom: 0.25em;
   display: none;
 }
 
@@ -63,7 +63,7 @@ body {
 #hztag {
   background: #000;
   color: #0f0;
-  border: 1px solid #0f0;
+  border: 2px solid #0f0;
   padding: 0.5em;
   font-size: 0.5em;
   white-space: nowrap;
@@ -133,23 +133,34 @@ canvas#timespan {
 #buttons {
   z-index: 5;
   position: fixed;
-  left: 0;
+  left: 5%;
   top: 0;
   padding: 0.1em;
+  display: flex;
+  gap: 0.25em;
 }
 
 #buttons button {
-  width: 2em;
-  height: 2em;
   font-size: xxx-large;
 }
 
-@media (orientation: portrait) {}
+@media (orientation: landscape) {
+  #buttons button {
+    font-size: xx-large;
+  }
+
+  body {
+    font-size: xx-large;
+  }
+}
 
 button {
   color: #080;
   background: #000;
   border: 1px solid #0f0;
+  width: 2em;
+  height: 2em;
+  border-width: 2px;  
   cursor: pointer;
   user-select: none;
 }
