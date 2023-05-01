@@ -27,7 +27,7 @@ body {
   top: 0;
   right: 0;
   bottom: 0;
-  border: 2px solid #0f0;
+  outline: 2px solid #0f0;
   visibility: hidden;
 }
 
@@ -55,15 +55,15 @@ body {
 }
 
 #point {
-  border: 0.1em solid #0f0;
-  border-radius: 0.1em;
+  border: 0.15em solid #0f0;
+  border-radius: 0.15em;
   transform: translate(-50%, -50%);
 }
 
 #hztag {
   background: #000;
   color: #0f0;
-  border: 2px solid #0f0;
+  outline: 2px solid #0f0;
   padding: 0.5em;
   font-size: 0.5em;
   white-space: nowrap;
