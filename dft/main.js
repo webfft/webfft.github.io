@@ -54,7 +54,7 @@ function init() {
   toggleGridMode();
   initMouseHandlers();
   initDatGUI();
-  showStatus('', { 'Record': recordAudio, 'Open': openFile });
+  showStatus('', { 'Sample': openSample, 'Record': recordAudio, 'Open': openFile });
 }
 
 function initDatGUI() {
@@ -135,6 +135,18 @@ async function openFile() {
   let file = await utils.selectAudioFile();
   if (!file) return;
   document.title = file.name;
+  audio_file = file;
+  config.timeMin = 0;
+  config.timeMax = 0;
+  config.sampleRate = 48000;
+  await decodeAudioFile();
+}
+
+async function openSample() {
+  await showStatus('Loading sample audio');
+  let res = await fetch('sample.mp3');
+  let file = await res.blob();
+  document.title = 'sample.mp3';
   audio_file = file;
   config.timeMin = 0;
   config.timeMax = 0;
