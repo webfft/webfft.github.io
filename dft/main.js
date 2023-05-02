@@ -9,6 +9,8 @@ let div_mover = $('#mover');
 let div_sarea = $('#sarea');
 let div_sarea_buttons = $('#sarea_buttons');
 let div_vline = $('#vline');
+let div_hztag = $('#hztag');
+let div_point = $('#point');
 let div_overlay = $('#overlay');
 let canvas_spectrum = $('#spectrum');
 let canvas_timeline = $('#timeline');
@@ -45,9 +47,9 @@ function init() {
   $('#play').onclick = () => schedule(playSelectedArea);
   $('#save').onclick = () => schedule(saveSelectedArea);
   $('#grid').onclick = () => schedule(toggleGridMode);
+  $('#cross').onclick = () => schedule(toggleGridMode);
   $('#zoom').onclick = () => schedule(zoomIntoSelectedArea);
   $('#reset').onclick = () => stopCurrentAction();
-  div_overlay.style.display = 'none';
   toggleGridMode();
   initMouseHandlers();
   initDatGUI();
@@ -147,6 +149,7 @@ async function decodeAudioFile() {
   if (!config.timeMin && !config.timeMax)
     config.timeMax = audio_signal.length / sr;
   await computeSpectrogram();
+  $('#buttons').style.display = '';
 }
 
 async function recordAudio() {
@@ -435,8 +438,8 @@ function drawPointTag(x0, y0) {
   if (!audio_signal) return;
 
   if (!x0 && !y0) {
-    $('#point').style.visibility = 'hidden';
-    $('#hztag').style.visibility = 'hidden';
+    div_point.style.visibility = 'hidden';
+    div_hztag.style.visibility = 'hidden';
     return;
   }
 
@@ -448,14 +451,14 @@ function drawPointTag(x0, y0) {
   let hz = f.toFixed(0) + ' Hz';
   let text = hz + ' ' + sec;
 
-  $('#point').style.visibility = 'visible';
-  $('#point').style.left = pct100(x0);
-  $('#point').style.top = pct100(y0);
+  div_point.style.visibility = 'visible';
+  div_point.style.left = pct100(x0);
+  div_point.style.top = pct100(y0);
 
-  $('#hztag').style.visibility = 'visible';
-  $('#hztag').style.left = pct100(x0);
-  $('#hztag').style.top = pct100(y0);
-  $('#hztag').innerText = text;
+  div_hztag.style.visibility = 'visible';
+  div_hztag.style.right = pct100(1 - x0);
+  div_hztag.style.bottom = pct100(1 - y0);
+  div_hztag.innerText = text;
 }
 
 async function selectArea(area, is_final = !!area) {
@@ -625,11 +628,16 @@ async function stopSound() {
   playing_sound?.src.stop();
 }
 
+function toggle(div) {
+  div.style.display = div.style.display ? '' : 'none';
+}
+
 function toggleGridMode() {
-  $('#grid').classList.toggle('selected');
-  let css = div_overlay.style;
-  css.display = css.display == 'none' ? '' : 'none';
-  if (css.display == 'none') {
+  toggle(div_overlay);
+  toggle($('#grid'));
+  toggle($('#cross'));
+
+  if (div_overlay.style.display == 'none') {
     selected_area = null;
     sub_spectrogram = null;
     drawPointTag(0, 0);
@@ -641,7 +649,7 @@ function toggleGridMode() {
 
 function initMouseHandlers() {
   attachMouseHandlers(div_overlay, {
-    point: (x, y) => drawPointTag(x, y),
+    point: (x, y) => { selectArea(null); drawPointTag(x, y); },
     select: (x, y, w, h) => selectArea([x, y, w, h], true),
     selecting: (x, y, w, h) => selectArea([x, y, w, h], false),
   });
