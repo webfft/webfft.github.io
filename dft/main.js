@@ -19,6 +19,7 @@ let canvas_ampdensity = $('#ampdensity');
 let actions = [];
 let timer = 0;
 let config = {}, prev_config = {};
+config.mimeType = 'audio/webm;codecs=opus';
 config.sampleRate = 48000;
 config.frameSize = 1024;
 config.dbRange = 1.5; // log10(re^2+im^2)
@@ -62,6 +63,7 @@ function initDatGUI() {
   gui.add(config, 'frameSize', 256, 4096, 256).name('N').onFinishChange(processUpdatedConfig);
   gui.add(config, 'dbRange', 0.25, 5, 0.25).name('dB').onFinishChange(processUpdatedConfig);
   gui.add(config, 'audioKbps', 6, 128, 1).name('kbps');
+  gui.add(config, 'mimeType').name('mimetype');
 }
 
 function schedule(callback, args = []) {
@@ -158,7 +160,7 @@ async function recordAudio() {
 
   await showStatus('Initializing MediaRecorder');
   let recorder = new MediaRecorder(mic_stream, {
-    mimeType: 'audio/webm;codecs=opus',
+    mimeType: config.mimeType,
     audioBitsPerSecond: config.audioKbps * 1000 | 0,
   });
 
