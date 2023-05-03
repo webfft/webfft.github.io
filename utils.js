@@ -47,10 +47,7 @@ export class Float32Tensor {
 
 export function forwardFFT(signal) {
   let n = signal.length;
-  let sig2 = new Float32Array(n * 2);
-  let res2 = new Float32Array(n * 2);
-  FFT.expand(signal, sig2);
-  FFT.forward(sig2, res2);
+  let res2 = forwardReFFT(signal);
   return new Float32Tensor([n, 2], res2);
 }
 
@@ -60,6 +57,72 @@ export function inverseFFT(frame) {
   let sig2 = new Float32Array(n * 2);
   FFT.inverse(frame.array, sig2);
   return FFT.re(sig2);
+}
+
+// http://www.robinscheibler.org/2013/02/13/real-fft.html
+// x -> Z -> (Xe, Xo) -> X
+export function forwardReFFT(x, X, [Xe, Xo] = []) {
+  let n = x.length;
+
+  X = X || new Float32Array(2 * n);
+  Xe = Xe || new Float32Array(n);
+  Xo = Xo || new Float32Array(n);
+
+  let Z = X.subarray(0, n);
+
+  dcheck(X.length == 2 * n);
+  dcheck(Z.length == n);
+  dcheck(Xe.length == n);
+  dcheck(Xo.length == n);
+
+  FFT.forward(x, Z);
+  splitDFTs(Xe, Xo, Z);
+  mergeDFTs(Xe, Xo, X);
+
+  return X;
+}
+
+// Z -> X + iY
+function splitDFTs(X, Y, Z) {
+  let n = X.length / 2;
+
+  dcheck(Y.length == 2 * n);
+  dcheck(Z.length == 2 * n);
+
+  for (let k = 0; k < n; k++) {
+    let k1 = k, k2 = (-k + n) % n;
+    let re1 = Z[2 * k1 + 0];
+    let im1 = Z[2 * k1 + 1];
+    let re2 = Z[2 * k2 + 0];
+    let im2 = Z[2 * k2 + 1];
+    X[2 * k + 0] = (re1 + re2) / 2;
+    X[2 * k + 1] = (im1 - im2) / 2;
+    Y[2 * k + 0] = (im1 + im2) / 2;
+    Y[2 * k + 1] = (re2 - re1) / 2;
+  }
+}
+
+// (Xe, Xo) -> X
+function mergeDFTs(Xe, Xo, X) {
+  let n = Xe.length;
+  let uroots = FFT.get(n).uroots;
+
+  dcheck(Xo.length == n);
+  dcheck(X.length == 2 * n);
+
+  for (let k = 0; k < n; k++) {
+    let k1 = k % (n / 2);
+    let k2 = (n - k) % n;
+    let re1 = Xe[2 * k1 + 0];
+    let im1 = Xe[2 * k1 + 1];
+    let re2 = Xo[2 * k1 + 0];
+    let im2 = Xo[2 * k1 + 1];
+    let cos = uroots[k2 * 2 + 0];
+    let sin = uroots[k2 * 2 + 1];
+    // (re1, im1) + (re2, im2) * (cos, sin)
+    X[2 * k + 0] = re1 + re2 * cos - im2 * sin;
+    X[2 * k + 1] = im1 + re2 * sin + im2 * cos;
+  }
 }
 
 export function applyBandpassFilter(signal, f_min, f_max) {
@@ -152,27 +215,32 @@ function drawSpectrogramFrame(img, frame, x, rgb_fn) {
   }
 }
 
-export function computeSpectrogram(signal, num_frames, frame_size = 1024) {
-  let frames = new Float32Tensor([num_frames, frame_size, 2]); // (re, im)
-  let frame1 = new Float32Array(frame_size);
-  let frame2 = new Float32Array(frame_size * 2);
+export function computeSpectrogram(signal, { num_frames, frame_size, min_frame, max_frame }) {
+  let sig1 = new Float32Array(frame_size);
+  let tmp1 = new Float32Array(frame_size);
+  let tmp2 = new Float32Array(frame_size);
 
-  for (let t = 0; t < num_frames; t++) {
-    readAudioFrame(signal, frame1, num_frames, t);
-    FFT.expand(frame1, frame2); // re -> (re, im)
-    FFT.forward(frame2, frames.subtensor(t).array);
+  min_frame = min_frame || 0;
+  max_frame = max_frame || num_frames - 1;
+
+  let frames = new Float32Tensor([max_frame - min_frame + 1, frame_size, 2]); // (re, im)
+
+  for (let t = min_frame; t <= max_frame; t++) {
+    let res1 = frames.subtensor(t - min_frame).array;
+    readAudioFrame(signal, sig1, num_frames, t + 0);
+    forwardReFFT(sig1, res1, [tmp1, tmp2]);
   }
 
   return frames;
 }
 
-export function computePaddedSpectrogram(signal, num_frames, frame_size) {
+export async function computePaddedSpectrogram(signal, { num_frames, frame_size }) {
   dcheck(frame_size % 2 == 0);
   let padded = new Float32Array(signal.length + frame_size);
   padded.set(signal, frame_size / 2);
   let frame_step = signal.length / num_frames;
   let padded_frames = padded.length / frame_step | 0;
-  let spectrogram = computeSpectrogram(padded, padded_frames, frame_size);
+  let spectrogram = computeSpectrogram(padded, { num_frames: padded_frames, frame_size });
   let null_frames = (padded_frames - num_frames) / 2 | 0;
   return spectrogram.slice(null_frames, null_frames + num_frames);
 }
@@ -282,4 +350,87 @@ export function generateWavFile(wave, sample_rate) {
     i16[22 + i] = wave[i] * 0x7FFF;
 
   return i16.buffer;
+}
+
+class FFTWorker {
+  static workers = [];
+  static requests = {};
+  static handlers = {};
+
+  static get(worker_id) {
+    let worker = FFTWorker.workers[worker_id] || new FFTWorker(worker_id);
+    return FFTWorker.workers[worker_id] = worker;
+  }
+
+  constructor(id) {
+    this.id = id;
+    this.worker = new Worker('/utils.js', { type: 'module' });
+    this.worker.onmessage = (e) => {
+      let { txid, res, err } = e.data;
+      // this.dlog('received a message:', txid, { res, err });
+      let promise = FFTWorker.requests[txid];
+      dcheck(promise);
+      delete FFTWorker.requests[txid];
+      err ? promise.reject(err) : promise.resolve(res);
+    };
+    this.dlog('started');
+  }
+
+  terminate() {
+    this.worker.terminate();
+    delete FFTWorker.workers[this.id];
+    this.dlog('terminated');
+  }
+
+  sendRequest(req, transfer = []) {
+    dcheck(req && req.call && req.args);
+    dcheck(Array.isArray(transfer));
+    let txid = Date.now() + '.' + (Math.random() * 1e6).toFixed(0);
+    let message = { req, txid };
+    this.worker.postMessage(message, transfer);
+    // this.dlog('was sent a message:', txid, req);
+    return new Promise((resolve, reject) => {
+      FFTWorker.requests[txid] = { resolve, reject };
+    });
+  }
+
+  dlog(...args) {
+    console.info('fftw.' + this.id, ...args);
+  }
+}
+
+if (typeof window === 'undefined') {
+  // This is a Worker.
+  onmessage = (e) => {
+    let { txid, req } = e.data;
+    // console.debug('Routing a worker request:', txid, req);
+    dcheck(txid && req && req.call && req.args);
+    let handler = FFTWorker.handlers[req.call];
+    dcheck(handler);
+    try {
+      let { res, transfer } = handler(...req.args);
+      dcheck(Array.isArray(transfer));
+      let message = { txid, res };
+      // console.debug('Posting a worker message:', message);
+      postMessage(message, transfer);
+    } catch (err) {
+      let message = { txid, err };
+      postMessage(message);
+    }
+  };
+}
+
+FFTWorker.handlers['spectrogram'] = (signal, config) => {
+  console.debug('"spectrogram" handler invoked:', config);
+  let frames = computeSpectrogram(signal, config);
+  let dims = frames.dimensions;
+  let data = frames.array;
+  return { res: { dims, data }, transfer: [data.buffer] };
+};
+
+async function computeSpectrogramAsync(worker_id, signal, config) {
+  let worker = FFTWorker.get(worker_id);
+  let req = { call: 'spectrogram', args: [signal, config] };
+  let { dims, data } = await worker.sendRequest(req, [signal.buffer]);
+  return new Float32Tensor(dims, data);
 }

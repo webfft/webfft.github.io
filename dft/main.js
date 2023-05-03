@@ -35,6 +35,7 @@ let sub_spectrogram = null;
 let selected_area = null;
 let playing_sound = null;
 let mic_stream = null;
+let prev_audio_window = null;
 // let db_log = (s) => clamp(log10(s) / config.dbRange + 1); // 0.001..1 -> -3..0 -> 0..1
 let db_log = (a2) => a2 ** (0.5 / config.dbRange); // 0.001..1 -> 0.1..1
 let rgb_fn = (db) => [db * 9.0, db * 3.0, db * 1.0];
@@ -204,11 +205,18 @@ function getAudioWindow() {
   let n = audio_signal.length;
   if (i >= 0 && j <= n)
     return audio_signal.subarray(i, j);
+
   dcheck(j - i < 50e6);
+  let paw = prev_audio_window;
+  if (paw && paw.src == audio_signal) {
+    if (paw.min == i && paw.max == j)
+      return paw.res;
+  }
   let res = new Float32Array(j - i);
   let src = audio_signal.subarray(max(0, i), min(n, j));
   res.set(src, max(0, -i));
   console.debug('Copied audio signal:', i, '..', j);
+  prev_audio_window = { src: audio_signal, res, min: i, max: j };
   return res;
 }
 
@@ -283,7 +291,7 @@ async function computeSpectrogram() {
   let time_span = time_min + '..' + time_max;
   await showStatus(['Computing DFT:', time_span, 'sec @', num_frames, 'x', frame_size]);
   let audio_window = getAudioWindow();
-  spectrogram = utils.computePaddedSpectrogram(audio_window, num_frames, frame_size);
+  spectrogram = await utils.computePaddedSpectrogram(audio_window, { num_frames, frame_size });
   drawSpectrogram();
   await showStatus('');
   selected_area = null;
@@ -457,9 +465,9 @@ function drawPointTag(x0, y0) {
     return;
   }
 
-  let signal = getAudioWindow();
   let sr = config.sampleRate;
-  let t = x0 * signal.length / sr;
+  let duration = config.timeMax - config.timeMin;
+  let t = x0 * duration;
   let f = (1 - y0) * sr / 2;
   let sec = t.toFixed(2) + 's';
   let hz = f.toFixed(0) + ' Hz';
