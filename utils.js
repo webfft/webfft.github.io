@@ -4,6 +4,7 @@ export const $ = (selector) => document.querySelector(selector);
 export const log = (...args) => console.log(args.join(' '));
 export const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 export const mix = (a, b, x) => a * (1 - x) + b * x;
+export const step = (min, x) => x < min ? 0 : 1;
 export const clamp = (x, min = 0, max = 1) => Math.max(Math.min(x, max), min);
 export const hann = (x) => x > 0 && x < 1 ? Math.sin(Math.PI * x) ** 2 : 0;
 export const reim2 = (re, im) => re * re + im * im;
@@ -125,16 +126,17 @@ function mergeDFTs(Xe, Xo, X) {
   }
 }
 
-export function applyBandpassFilter(signal, f_min, f_max) {
+export function applyBandpassFilter(signal, filter_fn) {
   let n = signal.length;
-  dcheck(f_min >= 0 && f_max >= f_min && f_max <= n / 2);
   let fft = forwardFFT(signal);
+
   for (let i = 0; i < n; i++) {
     let f = Math.min(i, n - i);
-    let s = f >= f_min && f <= f_max ? 1 : 0;
+    let s = filter_fn(f);
     fft.array[2 * i + 0] *= s;
     fft.array[2 * i + 1] *= s;
   }
+
   return inverseFFT(fft);
 }
 

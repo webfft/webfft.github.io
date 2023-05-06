@@ -39,9 +39,8 @@ body {
   z-index: 5;
   width: auto;
   height: auto;
-  gap: 0.25em;
-  padding-top: 0.1em;
-  padding-left: 0.1em;
+  gap: 0.1em;
+  transform: translate(-1em, -1em);
   display: none;
 }
 
@@ -55,8 +54,8 @@ body {
 }
 
 #point {
-  border: 0.15em solid #0f0;
-  border-radius: 0.15em;
+  border: 0.2em solid #0f0;
+  border-radius: 0.2em;
   transform: translate(-50%, -50%);
 }
 

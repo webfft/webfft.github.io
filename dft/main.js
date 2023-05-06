@@ -14,14 +14,13 @@ let div_point = $('#point');
 let div_overlay = $('#overlay');
 let canvas_spectrum = $('#spectrum');
 let canvas_timeline = $('#timeline');
-let canvas_timespan = $('#timespan');
-let canvas_ampdensity = $('#ampdensity');
 let actions = [];
 let timer = 0;
 let config = {}, prev_config = {};
 config.mimeType = 'audio/webm;codecs=opus';
 config.sampleRate = 48000;
 config.frameSize = 1024;
+config.numFrames = 1024;
 config.dbRange = 1.5; // log10(re^2+im^2)
 config.audioKbps = 128;
 config.timeMin = 0; // sec
@@ -48,6 +47,7 @@ window.onunhandledrejection = (event) => showStatus(event.reason);
 function init() {
   $('#play').onclick = () => schedule(playSelectedArea);
   $('#save').onclick = () => schedule(saveSelectedArea);
+  $('#erase').onclick = () => schedule(eraseSelectedArea);
   $('#grid').onclick = () => schedule(toggleGridMode);
   $('#cross').onclick = () => schedule(toggleGridMode);
   $('#zoom').onclick = () => schedule(zoomIntoSelectedArea);
@@ -62,7 +62,8 @@ function initDatGUI() {
   gui.close();
   gui.add(config, 'sampleRate', 4000, 48000, 1000).name('Hz').onFinishChange(processUpdatedConfig);
   gui.add(config, 'frameSize', 256, 4096, 256).name('N').onFinishChange(processUpdatedConfig);
-  gui.add(config, 'dbRange', 0.25, 5, 0.25).name('dB').onFinishChange(processUpdatedConfig);
+  gui.add(config, 'numFrames', 256, 4096, 256).name('T').onFinishChange(processUpdatedConfig);
+  gui.add(config, 'dbRange', 0.25, 5, 0.25).name('sens').onFinishChange(processUpdatedConfig);
   gui.add(config, 'audioKbps', 6, 128, 1).name('kbps');
   gui.add(config, 'mimeType').name('mimetype');
 }
@@ -111,7 +112,7 @@ function processUpdatedConfig() {
 
   if (config.sampleRate != prev_config.sampleRate)
     schedule(decodeAudioFile);
-  else if (config.frameSize != prev_config.frameSize)
+  else if (config.frameSize != prev_config.frameSize || config.numFrames != prev_config.numFrames)
     schedule(computeSpectrogram);
   else if (config.timeMin != prev_config.timeMin || config.timeMax != prev_config.timeMax)
     schedule(computeSpectrogram);
@@ -145,9 +146,8 @@ async function openFile() {
 
 async function openSample() {
   await showStatus('Loading sample audio');
-  let res = await fetch('sample.mp3');
+  let res = await fetch('lapwing.mp3');
   let file = await res.blob();
-  document.title = 'sample.mp3';
   audio_file = file;
   config.timeMin = 0;
   config.timeMax = 0;
@@ -284,7 +284,7 @@ function zoomTimeline(zoom = 1.0) {
 }
 
 async function computeSpectrogram() {
-  let num_frames = canvas_fft.width;
+  let num_frames = config.numFrames;
   let frame_size = config.frameSize;
   let time_min = config.timeMin.toFixed(2);
   let time_max = config.timeMax.toFixed(2);
@@ -306,67 +306,11 @@ async function computeSpectrogram() {
 }
 
 function drawSpectrogram() {
+  canvas_fft.width = config.numFrames;
   utils.drawSpectrogram(canvas_fft, spectrogram, { db_log, rgb_fn });
   resetCanvasTransform();
   selectArea(null);
   drawPointTag(0, 0);
-
-  // drawTimespanView(canvas_timespan);
-  // drawAvgSpectrum();
-  // drawVolumeTimeline();
-  // drawAmpDensity();
-}
-
-function drawTimespanView(canvas) {
-  let cw = canvas.width;
-  let ch = canvas.height;
-  let ctx = canvas.getContext('2d');
-
-  let sr = config.sampleRate;
-  let t1 = config.timeMin * sr / audio_signal.length;
-  let t2 = config.timeMax * sr / audio_signal.length;
-  let rx = t1 * cw | 0;
-  let rw = (t2 - t1) * cw | 0;
-  let rh = ch / 8 | 0;
-  let ry = ch * 0.5 - rh * 0.5 | 0;
-
-  ctx.clearRect(0, 0, cw, ch);
-  ctx.strokeStyle = '#fc2';
-  ctx.fillStyle = '#f82';
-
-  ctx.moveTo(0, ch / 2);
-  ctx.lineTo(cw, ch / 2);
-  ctx.stroke();
-  ctx.fillRect(rx, ry, rw, rh);
-}
-
-function drawAmpDensity(canvas = canvas_ampdensity) {
-  let cw = canvas.width;
-  let ch = canvas.height;
-  let ctx = canvas.getContext('2d');
-  let img = ctx.getImageData(0, 0, cw, ch);
-  let amp_density = utils.getAmpDensity(spectrogram, ch);
-  let amp_max = amp_density.reduce((s, x) => max(s, x), 0);
-
-  img.data.fill(0);
-
-  for (let y = 0; y < ch; y++) {
-    for (let x = 0; x < cw; x++) {
-      let s = (ch - 1 - y) / ch;
-      let f = s * amp_density.length | 0;
-      let a = Math.abs((x + 0.5) / cw * 2 - 1);
-      let a_max = (amp_density[f] / amp_max) ** 0.25;
-      if (a > a_max) continue;
-      let [r, g, b] = rgb_fn(s);
-      let i = (y * cw + x) * 4;
-      img.data[i + 0] = 255 * r;
-      img.data[i + 1] = 255 * g;
-      img.data[i + 2] = 255 * b;
-      img.data[i + 3] = 255;
-    }
-  }
-
-  ctx.putImageData(img, 0, 0);
 }
 
 function getSelectedSpectrogram() {
@@ -559,28 +503,52 @@ async function playSelectedArea() {
   await playSound(selected_area.wave);
 }
 
-async function extractSelectedSound() {
-  if (selected_area.wave)
-    return;
+function filterSelectedSound(filter_fn) {
+  if (!selected_area) return null;
 
   let sr = config.sampleRate;
   let aw = getAudioWindow();
   let { t1, t2, f1, f2 } = selected_area;
 
-  await showStatus('Applying bandpass filter');
   let len = 2 ** ceil(log2(t2 - t1));
+  let f_min = f1 / sr * 2 * len / 2 | 0;
+  let f_max = f2 / sr * 2 * len / 2 | 0;
+
   let aw2 = new Float32Array(len);
   aw2.set(aw.subarray(t1, t2), 0);
+
   let aw3 = utils.applyBandpassFilter(aw2,
-    f1 / sr * 2 * len / 2 | 0,
-    f2 / sr * 2 * len / 2 | 0);
+    (f) => filter_fn(f, f_min, f_max));
 
-  let aw4 = aw3.subarray(0, t2 - t1);
-  let amp_max = aw4.reduce((s, x) => max(s, abs(x)), 0);
-  for (let i = 0; i < len; i++)
-    aw4[i] /= max(1e-6, amp_max);
+  return aw3.subarray(0, t2 - t1);
+}
 
-  selected_area.wave = aw4;
+async function extractSelectedSound() {
+  if (selected_area.wave) return;
+
+  await showStatus('Applying bandpass filter');
+  let wave = filterSelectedSound(
+    (f, f_min, f_max) => f >= f_min && f <= f_max ? 1 : 0);
+
+  let amp_max = wave.reduce((s, x) => max(s, abs(x)), 0);
+  for (let i = 0; i < wave.length; i++)
+    wave[i] /= max(1e-6, amp_max);
+
+  selected_area.wave = wave;
+}
+
+async function eraseSelectedArea() {
+  if (!selected_area) return;
+
+  await showStatus('Applying bandpass filter');
+  let wave = filterSelectedSound(
+    (f, f_min, f_max) => f < f_min || f > f_max ? 1 : 0);
+
+  let aw = getAudioWindow();
+  let { t1, t2 } = selected_area;
+  aw.subarray(t1, t2).set(wave); // overwrite
+
+  await computeSpectrogram();
 }
 
 async function saveSelectedArea() {
