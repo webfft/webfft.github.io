@@ -1,7 +1,7 @@
 class MicRecWorklet extends AudioWorkletProcessor {
   static get parameterDescriptors() {
     return [
-      { name: 'foo', defaultValue: 0.25, minValue: 0, maxValue: 1 },
+      { name: 'channel', defaultValue: 0 },
     ];
   }
 
@@ -9,19 +9,12 @@ class MicRecWorklet extends AudioWorkletProcessor {
     super();
     this.chunks = [];
     this.port.onmessage = (e) => this.onmessage(e);
-    console.debug('MicRecWorklet created');
   }
 
-  onmessage(e) {
-    console.debug(e.data);
-    let size = this.chunks.reduce((s, a) => s + a.length, 0);
-    let merged = new Float32Array(size);
-    let offset = 0;
-    for (let chunk of this.chunks) {
-      merged.set(chunk, offset);
-      offset += chunk.length;
-    }
-    this.port.postMessage({ data: merged.buffer, size }, [merged.buffer]);
+  async onmessage(e) {
+    let buffers = this.chunks.map((a) => a.buffer);
+    this.port.postMessage({ channels: [buffers] }, buffers);
+    this.chunks = [];
   }
 
   process(inputs, outputs, params) {

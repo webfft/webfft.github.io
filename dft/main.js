@@ -65,8 +65,8 @@ function initDatGUI() {
   gui.add(config, 'frameSize', 256, 4096, 256).name('N').onFinishChange(processUpdatedConfig);
   gui.add(config, 'numFrames', 256, 4096, 256).name('T').onFinishChange(processUpdatedConfig);
   gui.add(config, 'dbRange', 0.25, 5, 0.25).name('sens').onFinishChange(processUpdatedConfig);
-  gui.add(config, 'audioKbps', 6, 128, 1).name('kbps');
-  gui.add(config, 'mimeType').name('mimetype');
+  // gui.add(config, 'audioKbps', 6, 128, 1).name('kbps');
+  // gui.add(config, 'mimeType').name('mimetype');
 }
 
 function schedule(callback, args = []) {
@@ -167,9 +167,9 @@ async function decodeAudioFile() {
   $('#buttons').style.display = '';
 }
 
-async function recordAudio2() {
+async function getMicStream() {
   await showStatus('Requesting mic access');
-  mic_stream = await navigator.mediaDevices.getUserMedia({
+  return navigator.mediaDevices.getUserMedia({
     audio: {
       channelCount: 1,
       sampleSize: 16,
@@ -180,12 +180,19 @@ async function recordAudio2() {
       // latency: 0,
     }
   });
+}
+
+async function recordAudio2() {
+  mic_stream = await getMicStream();
+
   try {
-    let ctx = await utils.recordAudioWithWorklet(mic_stream, config.sampleRate);
-    ctx.onaudiodata = (blob) => {
+    await showStatus('Initializing AudioRecorder');
+    let recorder = new utils.AudioRecorder(mic_stream, config.sampleRate);
+    recorder.onaudiodata = (blob) => {
       audio_file = blob;
       decodeAudioFile();
     };
+    await recorder.start();
     await showStatus('Recording...', { 'Stop': stopRecording });
   } catch (err) {
     await stopRecording();
@@ -193,8 +200,7 @@ async function recordAudio2() {
 }
 
 async function recordAudio() {
-  await showStatus('Requesting mic access');
-  mic_stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  mic_stream = await getMicStream();
 
   await showStatus('Initializing MediaRecorder');
   let recorder = new MediaRecorder(mic_stream, {

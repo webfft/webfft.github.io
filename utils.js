@@ -332,66 +332,98 @@ export async function decodeAudioFile(file, sample_rate) {
   }
 }
 
-export async function recordAudioWithWorklet(stream, sample_rate) {
-  let ctx = {
-    onaudiodata: null,
+export class AudioRecorder {
+  constructor(stream, sample_rate) {
+    this.stream = stream;
+    this.sample_rate = sample_rate;
+    this.onaudiodata = null;
 
-    audio_blob: null,
-    audio_ctx: null,
-    worklet: null,
-    mss: null,
-    stream_ended: null,
-
-    async start() {
-      log('Initializing the mic recorder');
-      ctx.audio_ctx = new AudioContext({ sampleRate: sample_rate });
-
-      await ctx.audio_ctx.audioWorklet.addModule('/mic-rec.js');
-      ctx.worklet = new AudioWorkletNode(ctx.audio_ctx, 'mic-rec');
-      // ctx.worklet.onprocessorerror = (e) => console.error('mic-rec worklet:', e);
-
-      ctx.mss = ctx.audio_ctx.createMediaStreamSource(stream);
-      ctx.mss.connect(ctx.worklet);
-
-      await ctx.audio_ctx.resume();
-      if (!stream.active)
-        throw new Error('Stream is not active: ' + stream.id);
-    },
-
-    async fetch() {
-      log('Fetching audio data from the worklet');
-      ctx.worklet.port.postMessage('foo');
-      let { data, size } = await new Promise((resolve) =>
-        ctx.worklet.port.onmessage = (e) => resolve(e.data));
-
-      log('Recorded audio:', (size / sample_rate).toFixed(2), 'sec');
-      let wave = new Float32Array(data);
-      dcheck(wave.length == size);
-      let wav_buffer = generateWavFile(wave, sample_rate);
-      ctx.audio_blob = new Blob([wav_buffer], { type: 'audio/wav' });
-      ctx.close();
-      ctx.onaudiodata?.(ctx.audio_blob);
-    },
-
-    close() {
-      ctx.mss?.disconnect();
-      ctx.worklet?.disconnect();
-      ctx.audio_ctx?.close();
-    }
-  };
-
-  try {
-    await ctx.start();
-  } catch (err) {
-    ctx.close();
-    throw err;
+    this.audio_blob = null;
+    this.audio_ctx = null;
+    this.worklet = null;
+    this.mss = null;
+    this.stream_ended = null;
   }
 
-  ctx.stream_ended = new Promise((resolve) =>
-    stream.addEventListener('inactive', resolve));
-  ctx.stream_ended.then(() => ctx.fetch());
+  async start() {
+    try {
+      await this.init();
+    } catch (err) {
+      this.close();
+      throw err;
+    }
 
-  return ctx;
+    let stream = this.stream;
+    if (!stream.active)
+      throw new Error('Stream is not active: ' + stream.id);
+
+    this.stream_ended = new Promise((resolve) => {
+      if ('oninactive' in stream) {
+        console.debug('Watching for stream.oninactive');
+        stream.addEventListener('inactive', resolve);
+      } else {
+        console.debug('Started a timer waiting for !stream.active');
+        let timer = setInterval(() => {
+          if (!stream.active) {
+            resolve();
+            clearInterval(timer);
+            console.debug('Stopped the !stream.active timer');
+          }
+        }, 25);
+      }
+    });
+
+    this.stream_ended.then(async () => {
+      console.debug('Audio stream ended');
+      this.stop();
+    });
+  }
+
+  async stop() {
+    await this.fetch();
+    this.close();
+  }
+
+  async init() {
+    log('Initializing the mic recorder @', this.sample_rate, 'Hz');
+    this.audio_ctx = new AudioContext({ sampleRate: this.sample_rate });
+
+    await this.audio_ctx.audioWorklet.addModule('/mic-rec.js');
+    this.worklet = new AudioWorkletNode(this.audio_ctx, 'mic-rec');
+    // this.worklet.onprocessorerror = (e) => console.error('mic-rec worklet:', e);
+
+    this.mss = this.audio_ctx.createMediaStreamSource(this.stream);
+    this.mss.connect(this.worklet);
+    await this.audio_ctx.resume();
+  }
+
+  async fetch() {
+    if (!this.worklet) return;
+    log('Fetching audio data from the worklet');
+    this.worklet.port.postMessage('foo');
+    let { channels } = await new Promise((resolve) =>
+      this.worklet.port.onmessage = (e) => resolve(e.data));
+
+    dcheck(channels.length > 0);
+    let blob = new Blob(channels[0]);
+    let data = await blob.arrayBuffer();
+    dcheck(data.byteLength % 4 == 0);
+    let wave = new Float32Array(data);
+    log('Recorded audio:', (wave.length / this.sample_rate).toFixed(2), 'sec');
+    let wav_buffer = generateWavFile(wave, this.sample_rate);
+    this.audio_blob = new Blob([wav_buffer], { type: 'audio/wav' });
+    this.onaudiodata?.(this.audio_blob);
+    return this.audio_blob;
+  }
+
+  close() {
+    this.mss?.disconnect();
+    this.worklet?.disconnect();
+    this.audio_ctx?.close();
+    this.mss = null;
+    this.worklet = null;
+    this.audio_ctx = null;
+  }
 }
 
 // https://docs.fileformat.com/audio/wav
