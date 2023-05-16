@@ -159,7 +159,7 @@ button {
   border: 1px solid #0f0;
   width: 2em;
   height: 2em;
-  border-width: 2px;  
+  border-width: 2px;
   cursor: pointer;
   user-select: none;
 }
@@ -190,4 +190,5 @@ button.disabled {
 
 html>body>.dg.ac {
   z-index: 4;
+  transform: scale(2) translate(-25%);
 }

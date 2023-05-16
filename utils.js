@@ -332,6 +332,68 @@ export async function decodeAudioFile(file, sample_rate) {
   }
 }
 
+export async function recordAudioWithWorklet(stream, sample_rate) {
+  let ctx = {
+    onaudiodata: null,
+
+    audio_blob: null,
+    audio_ctx: null,
+    worklet: null,
+    mss: null,
+    stream_ended: null,
+
+    async start() {
+      log('Initializing the mic recorder');
+      ctx.audio_ctx = new AudioContext({ sampleRate: sample_rate });
+
+      await ctx.audio_ctx.audioWorklet.addModule('/mic-rec.js');
+      ctx.worklet = new AudioWorkletNode(ctx.audio_ctx, 'mic-rec');
+      // ctx.worklet.onprocessorerror = (e) => console.error('mic-rec worklet:', e);
+
+      ctx.mss = ctx.audio_ctx.createMediaStreamSource(stream);
+      ctx.mss.connect(ctx.worklet);
+
+      await ctx.audio_ctx.resume();
+      if (!stream.active)
+        throw new Error('Stream is not active: ' + stream.id);
+    },
+
+    async fetch() {
+      log('Fetching audio data from the worklet');
+      ctx.worklet.port.postMessage('foo');
+      let { data, size } = await new Promise((resolve) =>
+        ctx.worklet.port.onmessage = (e) => resolve(e.data));
+
+      log('Recorded audio:', (size / sample_rate).toFixed(2), 'sec');
+      let wave = new Float32Array(data);
+      dcheck(wave.length == size);
+      let wav_buffer = generateWavFile(wave, sample_rate);
+      ctx.audio_blob = new Blob([wav_buffer], { type: 'audio/wav' });
+      ctx.close();
+      ctx.onaudiodata?.(ctx.audio_blob);
+    },
+
+    close() {
+      ctx.mss?.disconnect();
+      ctx.worklet?.disconnect();
+      ctx.audio_ctx?.close();
+    }
+  };
+
+  try {
+    await ctx.start();
+  } catch (err) {
+    ctx.close();
+    throw err;
+  }
+
+  ctx.stream_ended = new Promise((resolve) =>
+    stream.addEventListener('inactive', resolve));
+  ctx.stream_ended.then(() => ctx.fetch());
+
+  return ctx;
+}
+
 // https://docs.fileformat.com/audio/wav
 export function generateWavFile(wave, sample_rate) {
   let len = wave.length;
@@ -402,7 +464,7 @@ class FFTWorker {
 }
 
 if (typeof window === 'undefined') {
-  // This is a Worker.
+  console.debug('Registering a Worker onmessage handler');
   onmessage = (e) => {
     let { txid, req } = e.data;
     // console.debug('Routing a worker request:', txid, req);

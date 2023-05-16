@@ -17,16 +17,17 @@ let canvas_timeline = $('#timeline');
 let actions = [];
 let timer = 0;
 let config = {}, prev_config = {};
+let defaultSampleRate = 48000;
 config.mimeType = 'audio/webm;codecs=opus';
-config.sampleRate = 48000;
+config.sampleRate = defaultSampleRate;
 config.frameSize = 1024;
 config.numFrames = 1024;
 config.dbRange = 1.5; // log10(re^2+im^2)
 config.audioKbps = 128;
 config.timeMin = 0; // sec
 config.timeMax = 0; // sec
-let minSampleRate = 0;
-let maxSampleRate = 0;
+let minSampleRate = 3000;
+let maxSampleRate = 384000;
 let audio_file = null;
 let audio_signal = null;
 let spectrogram = null;
@@ -55,12 +56,12 @@ function init() {
   toggleGridMode();
   initMouseHandlers();
   initDatGUI();
-  showStatus('', { 'Sample': openSample, 'Record': recordAudio, 'Open': openFile });
+  showStatus('', { 'Sample': openSample, 'Record': recordAudio2, 'Open': openFile });
 }
 
 function initDatGUI() {
   gui.close();
-  gui.add(config, 'sampleRate', 4000, 48000, 1000).name('Hz').onFinishChange(processUpdatedConfig);
+  gui.add(config, 'sampleRate', 4000, maxSampleRate, 1000).name('Hz').onFinishChange(processUpdatedConfig);
   gui.add(config, 'frameSize', 256, 4096, 256).name('N').onFinishChange(processUpdatedConfig);
   gui.add(config, 'numFrames', 256, 4096, 256).name('T').onFinishChange(processUpdatedConfig);
   gui.add(config, 'dbRange', 0.25, 5, 0.25).name('sens').onFinishChange(processUpdatedConfig);
@@ -126,7 +127,7 @@ function processUpdatedConfig() {
 }
 
 async function resetView() {
-  config.sampleRate = 48000;
+  config.sampleRate = defaultSampleRate;
   config.timeMin = 0;
   config.timeMax = 0;
   await decodeAudioFile();
@@ -140,7 +141,6 @@ async function openFile() {
   audio_file = file;
   config.timeMin = 0;
   config.timeMax = 0;
-  config.sampleRate = 48000;
   await decodeAudioFile();
 }
 
@@ -151,11 +151,11 @@ async function openSample() {
   audio_file = file;
   config.timeMin = 0;
   config.timeMax = 0;
-  config.sampleRate = 48000;
   await decodeAudioFile();
 }
 
 async function decodeAudioFile() {
+  if (!audio_file) return;
   initMinMaxSampleRate();
   let sr = config.sampleRate;
   let size_kb = (audio_file.size / 1024).toFixed(0);
@@ -165,6 +165,31 @@ async function decodeAudioFile() {
     config.timeMax = audio_signal.length / sr;
   await computeSpectrogram();
   $('#buttons').style.display = '';
+}
+
+async function recordAudio2() {
+  await showStatus('Requesting mic access');
+  mic_stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      channelCount: 1,
+      sampleSize: 16,
+      sampleRate: config.sampleRate,
+      echoCancellation: false,
+      noiseSuppression: false,
+      // autoGainControl: false,
+      // latency: 0,
+    }
+  });
+  try {
+    let ctx = await utils.recordAudioWithWorklet(mic_stream, config.sampleRate);
+    ctx.onaudiodata = (blob) => {
+      audio_file = blob;
+      decodeAudioFile();
+    };
+    await showStatus('Recording...', { 'Stop': stopRecording });
+  } catch (err) {
+    await stopRecording();
+  }
 }
 
 async function recordAudio() {
@@ -223,7 +248,7 @@ function getAudioWindow() {
 function moveFreqsRange(step = 0, is_temp = false) {
   dcheck(abs(step) <= 1);
   let sr1 = config.sampleRate;
-  let sr2 = min(48000, sr1 * (1 + step)) | 0;
+  let sr2 = min(maxSampleRate, sr1 * (1 + step)) | 0;
 
   if (is_temp) {
     let ty = ((sr2 - sr1) / sr1 * 100).toFixed(2);
