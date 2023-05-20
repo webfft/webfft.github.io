@@ -172,10 +172,10 @@ async function getMicStream() {
     audio: {
       channelCount: 1,
       sampleSize: 16,
-      sampleRate: config.sampleRate,
+      sampleRate: { exact: config.sampleRate },
       echoCancellation: false,
       noiseSuppression: false,
-      // autoGainControl: false,
+      autoGainControl: false,
       // latency: 0,
     }
   });
