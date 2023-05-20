@@ -188,7 +188,7 @@ button.disabled {
   background: #888;
 }
 
-html>body>.dg.ac {
+html>body>.tp-dfwv {
   z-index: 4;
-  transform: scale(2) translate(-25%);
+  transform: scale(2) translate(-25%, 25%);
 }

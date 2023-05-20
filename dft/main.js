@@ -3,7 +3,7 @@ import * as utils from '../utils.js';
 const { PI, abs, min, max, sign, ceil, floor, log2, log10 } = Math;
 const { $, mix, clamp, dcheck } = utils;
 
-let gui = new dat.GUI({ name: 'Config' });
+let gui = null;
 let canvas_fft = $('#spectrogram');
 let div_mover = $('#mover');
 let div_sarea = $('#sarea');
@@ -55,18 +55,17 @@ function init() {
   $('#reset').onclick = () => stopCurrentAction();
   toggleGridMode();
   initMouseHandlers();
-  initDatGUI();
+  initDebugGUI();
   showStatus('', { 'Sample': openSample, 'Record': recordAudio2, 'Open': openFile });
 }
 
-function initDatGUI() {
-  gui.close();
-  gui.add(config, 'sampleRate', 4000, maxSampleRate, 1000).name('Hz').onFinishChange(processUpdatedConfig);
-  gui.add(config, 'frameSize', 256, 4096, 256).name('N').onFinishChange(processUpdatedConfig);
-  gui.add(config, 'numFrames', 256, 4096, 256).name('T').onFinishChange(processUpdatedConfig);
-  gui.add(config, 'dbRange', 0.25, 5, 0.25).name('sens').onFinishChange(processUpdatedConfig);
-  // gui.add(config, 'audioKbps', 6, 128, 1).name('kbps');
-  // gui.add(config, 'mimeType').name('mimetype');
+function initDebugGUI() {
+  gui = new Tweakpane.Pane();
+  gui.addInput(config, 'sampleRate', { min: 4000, max: maxSampleRate, step: 1000, label: 'Hz' });
+  gui.addInput(config, 'frameSize', { min: 256, max: 4096, step: 256, label: 'N' });
+  gui.addInput(config, 'numFrames', { min: 256, max: 4096, step: 256, label: 'T' });
+  gui.addInput(config, 'dbRange', { min: 0.25, max: 5, step: 0.25, label: 'sens' });
+  gui.on('change', (e) => e.last && processUpdatedConfig());
 }
 
 function schedule(callback, args = []) {
@@ -123,7 +122,7 @@ function processUpdatedConfig() {
     console.debug('config hasnt changed');
 
   prev_config = JSON.parse(JSON.stringify(config));
-  gui.updateDisplay();
+  gui.refresh();
 }
 
 async function resetView() {
