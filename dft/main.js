@@ -195,6 +195,7 @@ async function recordAudio2() {
     await showStatus('Recording...', { 'Stop': stopRecording });
   } catch (err) {
     await stopRecording();
+    throw err;
   }
 }
 
