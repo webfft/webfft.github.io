@@ -141,13 +141,13 @@ export function applyBandpassFilter(signal, filter_fn) {
 }
 
 export function drawSpectrogram(canvas, spectrogram, {
-  db_log = s => s, rgb_fn = s => [s * 9, s * 3, s] }) {
+  db_log = s => s, rgb_fn = s => [s * 9, s * 3, s], reim_fn = reim2 }) {
   let h = canvas.height;
   let w = canvas.width;
   let ctx = canvas.getContext('2d');
   let img = ctx.getImageData(0, 0, w, h);
-  let sqrabs_max = getFrameMax(spectrogram.array);
-  let rgb_reim = (re, im) => rgb_fn(db_log(reim2(re, im) / sqrabs_max));
+  let sqrabs_max = getFrameMax(spectrogram.array, reim_fn);
+  let rgb_reim = (re, im) => rgb_fn(db_log(reim_fn(re, im) / sqrabs_max));
   let num_frames = spectrogram.dimensions[0];
 
   for (let x = 0; x < w; x++) {
@@ -179,8 +179,8 @@ export function getMaskedSpectrogram(spectrogram1, mask_fn) {
   return spectrogram2;
 }
 
-export function getFrameMax(data) {
-  return aggFrameData(data, reim2, Math.max, 0);
+export function getFrameMax(data, reim_fn = reim2) {
+  return aggFrameData(data, reim_fn, Math.max, 0);
 }
 
 export function getFrameSum(data) {
@@ -229,7 +229,7 @@ export function computeSpectrogram(signal, { num_frames, frame_size, min_frame, 
 
   for (let t = min_frame; t <= max_frame; t++) {
     let res1 = frames.subtensor(t - min_frame).array;
-    readAudioFrame(signal, sig1, num_frames, t + 0);
+    readAudioFrame(signal, sig1, num_frames, t);
     forwardReFFT(sig1, res1, [tmp1, tmp2]);
   }
 
@@ -293,15 +293,25 @@ export function readAudioFrame(signal, frame, num_frames, frame_id) {
   let len = frame.length;
   let n = signal.length;
   let step = signal.length / num_frames;
-  let t = frame_id * step | 0;
+  let base = frame_id * step | 0;
+  let len0 = Math.min(len, n - base);
 
-  frame.set(
-    signal.subarray(
-      clamp(t, 0, n - 1),
-      clamp(t + len, 0, n - 1)));
+  // frame.set(
+  //   signal.subarray(
+  //     clamp(t, 0, n - 1),
+  //     clamp(t + len, 0, n - 1)));
+  //
+  // for (let i = 0; i < len; i++)
+  //   frame[i] *= hann(i / len);
 
-  for (let i = 0; i < len; i++)
-    frame[i] *= hann(i / len);
+  frame.fill(0);
+
+  for (let i = 0; i < len0; i++) {
+    let h = hann(i / len);
+    let s = signal[i + base];
+    let j = (i + base) % len;
+    frame[j] = h * s;
+  }
 
   return frame;
 }

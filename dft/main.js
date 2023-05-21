@@ -26,6 +26,7 @@ config.dbRange = 1.5; // log10(re^2+im^2)
 config.audioKbps = 128;
 config.timeMin = 0; // sec
 config.timeMax = 0; // sec
+config.showPhase = false;
 let minSampleRate = 3000;
 let maxSampleRate = 384000;
 let audio_file = null;
@@ -65,6 +66,7 @@ function initDebugGUI() {
   gui.addInput(config, 'frameSize', { min: 256, max: 4096, step: 256, label: 'N' });
   gui.addInput(config, 'numFrames', { min: 256, max: 4096, step: 256, label: 'T' });
   gui.addInput(config, 'dbRange', { min: 0.25, max: 5, step: 0.25, label: 'sens' });
+  gui.addInput(config, 'showPhase', { label: 'phase' });
   gui.on('change', (e) => e.last && processUpdatedConfig());
 }
 
@@ -116,10 +118,10 @@ function processUpdatedConfig() {
     schedule(computeSpectrogram);
   else if (config.timeMin != prev_config.timeMin || config.timeMax != prev_config.timeMax)
     schedule(computeSpectrogram);
+  else if (config.showPhase != prev_config.showPhase)
+    schedule(computeSpectrogram);
   else if (config.dbRange != prev_config.dbRange)
     schedule(drawSpectrogram);
-  else
-    console.debug('config hasnt changed');
 
   prev_config = JSON.parse(JSON.stringify(config));
   gui.refresh();
@@ -323,6 +325,12 @@ async function computeSpectrogram() {
   await showStatus(['Computing DFT:', time_span, 'sec @', num_frames, 'x', frame_size]);
   let audio_window = getAudioWindow();
   spectrogram = await utils.computePaddedSpectrogram(audio_window, { num_frames, frame_size });
+
+  if (config.showPhase) {
+    for (let i = 0; i < spectrogram.array.length; i += 2)
+      spectrogram.array[i] = 0;
+  }
+
   drawSpectrogram();
   await showStatus('');
   selected_area = null;
