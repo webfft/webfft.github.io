@@ -63,8 +63,8 @@ function init() {
 function initDebugGUI() {
   gui = new Tweakpane.Pane();
   gui.addInput(config, 'sampleRate', { min: 4000, max: maxSampleRate, step: 1000, label: 'Hz' });
-  gui.addInput(config, 'frameSize', { min: 256, max: 4096, step: 256, label: 'N' });
-  gui.addInput(config, 'numFrames', { min: 256, max: 4096, step: 256, label: 'T' });
+  gui.addInput(config, 'frameSize', { min: 256, max: 4096, step: 256, label: 'freqs' });
+  gui.addInput(config, 'numFrames', { min: 256, max: 4096, step: 256, label: 'frames' });
   gui.addInput(config, 'dbRange', { min: 0.25, max: 5, step: 0.25, label: 'sens' });
   gui.addInput(config, 'showPhase', { label: 'phase' });
   gui.on('change', (e) => e.last && processUpdatedConfig());
