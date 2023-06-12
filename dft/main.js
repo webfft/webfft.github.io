@@ -3,7 +3,7 @@ import * as utils from '../utils.js';
 const { PI, abs, min, max, sign, ceil, floor, log2, log10 } = Math;
 const { $, mix, clamp, dcheck } = utils;
 
-let gui = null;
+let gui = new dat.GUI({ name: 'Config' });
 let canvas_fft = $('#spectrogram');
 let div_mover = $('#mover');
 let div_sarea = $('#sarea');
@@ -61,13 +61,14 @@ function init() {
 }
 
 function initDebugGUI() {
-  gui = new Tweakpane.Pane();
-  gui.addInput(config, 'sampleRate', { min: 4000, max: maxSampleRate, step: 1000, label: 'Hz' });
-  gui.addInput(config, 'frameSize', { min: 256, max: 4096, step: 256, label: 'freqs' });
-  gui.addInput(config, 'numFrames', { min: 256, max: 4096, step: 256, label: 'frames' });
-  gui.addInput(config, 'dbRange', { min: 0.25, max: 5, step: 0.25, label: 'sens' });
-  gui.addInput(config, 'showPhase', { label: 'phase' });
-  gui.on('change', (e) => e.last && processUpdatedConfig());
+  let add = (title, ...args) => gui.add(config, ...args).name(title);
+  add('Hz', 'sampleRate', 4000, maxSampleRate, 1000);
+  add('freqs', 'frameSize', 256, 4096, 256);
+  add('frames', 'numFrames', 256, 4096, 256);
+  add('sens', 'dbRange', 0.25, 5, 0.25);
+  config.confirm = processUpdatedConfig;
+  add('Confirm', 'confirm');
+  gui.close();
 }
 
 function schedule(callback, args = []) {
@@ -124,7 +125,7 @@ function processUpdatedConfig() {
     schedule(drawSpectrogram);
 
   prev_config = JSON.parse(JSON.stringify(config));
-  gui.refresh();
+  gui.updateDisplay();
 }
 
 async function resetView() {
