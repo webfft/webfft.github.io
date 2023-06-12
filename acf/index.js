@@ -1,21 +1,24 @@
 import { FFT } from 'https://soundshader.github.io/webfft.js';
+import * as ut from '/utils.js';
 
 const EPS = 1e-6;
-const DISK = 1;
-const SYMM = 1;
-const TSHIFT = 0.01;
-const ACF = 1;
 
-let ts_min = 0.0;
-let ts_max = 15.0;
-let frame_size = 4096;
-let sample_rate = 16000;
-let num_frames_xs = 256;
-let num_frames_xl = 1024;
+let gui = new dat.GUI({ name: 'Settings' });
+let conf = {};
+conf.acf = true;
+conf.disk = true;
+conf.symm = 1;
+conf.delay = 0.0;
+conf.ts_min = 0.0;
+conf.ts_max = 15.0;
+conf.frame_size = 4096;
+conf.sample_rate = 16000;
+conf.num_frames_xs = 256;
+conf.num_frames_xl = 1024;
 let audio_ctx = null;
 let sound_files = [];
 let waveform = null;
-let freq_colors = new Float32Array(4 * frame_size);
+let freq_colors = null;
 
 // These are files in the vowels/*.ogg list.
 let sample_files = [
@@ -31,9 +34,11 @@ let fract = x => x - Math.floor(x);
 let sleep = t => new Promise(resolve => setTimeout(resolve, t));
 
 async function main() {
+  initDebugUI();
+
   $('#load').onclick = async () => {
     $('#sounds').innerHTML = '';
-    sound_files = await selectAudioFiles();
+    sound_files = await ut.selectAudioFile(true);
     log('Selected files:', sound_files.length);
     await renderSoundFilesAsGrid();
     if (sound_files.length == 1)
@@ -48,20 +53,47 @@ async function main() {
     await renderSoundFilesAsGrid();
   };
 
-  $('#play').onclick = () => waveform && playSound(waveform);
+  $('#play').onclick = () => waveform && ut.playSound(waveform, conf.sample_rate);
 
   initFreqColors();
   loadWaveform();
 
   if (waveform) {
     let canvas = createCanvas();
-    await renderWaveform(canvas, waveform, num_frames_xs);
+    await renderWaveform(canvas, waveform, conf.num_frames_xs);
   }
 }
 
+function initDebugUI() {
+  gui.close();
+
+  gui.add(conf, 'frame_size', { 4096: 4096, 2048: 2048, 1024: 1024 });
+  gui.add(conf, 'sample_rate', 4000, 48000, 4000);
+  gui.add(conf, 'acf');
+  gui.add(conf, 'disk');
+  gui.add(conf, 'symm', 1, 12, 1);
+  gui.add(conf, 'delay', 0, 1, 0.001);
+  // gui.add(conf, 'num_frames_xs', 64, 1024, 64);
+  // gui.add(conf, 'num_frames_xl', 1024, 4096, 1024);
+  // gui.add(conf, 'ts_min', 0, 60, 0.5);
+  // gui.add(conf, 'ts_max', 0, 60, 0.5);
+
+  conf.confirm = updateConfig;
+  gui.add(conf, 'confirm');
+}
+
+function updateConfig() {
+  initFreqColors();
+}
+
 function initFreqColors() {
-  for (let i = 0; i < frame_size; i++) {
-    let f = Math.min(i, frame_size - i) / frame_size * 2; // 0..1
+  if (freq_colors && freq_colors.length == 4 * conf.frame_size)
+    return;
+
+  freq_colors = new Float32Array(4 * conf.frame_size);
+
+  for (let i = 0; i < conf.frame_size; i++) {
+    let f = Math.min(i, conf.frame_size - i) / conf.frame_size * 2; // 0..1
     let r = hann(f, 0.0, 0.1) + hann(f, 0.3, 0.4);
     let g = hann(f, 0.0, 0.3) + hann(f, 0.3, 0.6);
     let b = hann(f, 0.0, 0.7) + hann(f, 0.3, 1.0);
@@ -84,17 +116,17 @@ async function downloadSamples(min = 10, max = 38) {
   }
 }
 
-function createCanvas(id = 0, nf = num_frames_xs) {
+function createCanvas(id = 0, nf = conf.num_frames_xs) {
   dcheck(nf > 0);
   let canvas = document.createElement('canvas');
   canvas.onclick = () => renderFullScreen(id);
 
-  if (DISK) {
+  if (conf.disk) {
     canvas.width = nf * 2;
     canvas.height = nf * 2;
   } else {
     canvas.height = nf;
-    canvas.width = frame_size / 2;
+    canvas.width = conf.frame_size / 2;
   }
 
   $('#sounds').append(canvas);
@@ -103,10 +135,10 @@ function createCanvas(id = 0, nf = num_frames_xs) {
 
 async function renderFullScreen(id) {
   dcheck(!$('canvas.top'));
-  let canvas = createCanvas(0, num_frames_xl);
+  let canvas = createCanvas(0, conf.num_frames_xl);
   canvas.className = 'top';
   canvas.onclick = () => canvas.remove();
-  await renderSoundFile(id, canvas, num_frames_xl);
+  await renderSoundFile(id, canvas, conf.num_frames_xl);
   saveWaveform();
 }
 
@@ -115,8 +147,8 @@ async function renderSoundFilesAsGrid() {
   log('Rendering sounds:', num);
 
   for (let id = 0; id < num; id++) {
-    let canvas = createCanvas(id + 1, num_frames_xs);
-    await renderSoundFile(id + 1, canvas, num_frames_xs);
+    let canvas = createCanvas(id + 1, conf.num_frames_xs);
+    await renderSoundFile(id + 1, canvas, conf.num_frames_xs);
     await sleep(0);
   }
 
@@ -128,9 +160,9 @@ async function renderSoundFile(id, canvas, num_frames) {
 
   if (id > 0) {
     try {
-      let buffer = await decodeAudioFile(file);
-      log('Decoded sound:', buffer.duration.toFixed(1), 'sec', '#' + id, '(' + file.name + ')');
-      waveform = buffer.getChannelData(0);
+      waveform = await ut.decodeAudioFile(file, conf.sample_rate);
+      let duration = waveform.length / conf.sample_rate;
+      log('Decoded sound:', duration.toFixed(1), 'sec', '#' + id, '(' + file.name + ')');
     } catch (err) {
       log(err.message);
       waveform = new Float32Array(0);
@@ -156,14 +188,14 @@ async function renderWaveform(canvas, waveform, num_frames) {
 }
 
 function prepareWaveform(waveform) {
-  let n = waveform.length, fs = frame_size;
+  let n = waveform.length, fs = conf.frame_size;
 
   // trim zeros at both ends
   let i = 0, j = n - 1;
   while (i < j && Math.abs(waveform[i]) < EPS) i++;
   while (i < j && Math.abs(waveform[j]) < EPS) j--;
   waveform = waveform.subarray(i, j + 1).subarray(
-    ts_min * sample_rate | 0, ts_max * sample_rate | 0);
+    conf.ts_min * conf.sample_rate | 0, conf.ts_max * conf.sample_rate | 0);
   n = waveform.length;
 
   // need some padding on both ends for smooth edges
@@ -192,36 +224,8 @@ function saveWaveform() {
   }
 }
 
-async function selectAudioFiles() {
-  let input = document.createElement('input');
-  input.type = 'file';
-  input.accept = 'audio/*';
-  input.multiple = true;
-  input.click();
-  return new Promise(resolve =>
-    input.onchange = () => resolve(input.files));
-}
-
-async function decodeAudioFile(file, sr = sample_rate) {
-  log('Decoding audio at', sr, 'Hz: ', file.size / 1024 | 0, 'KB');
-  let encoded = await file.arrayBuffer();
-  audio_ctx = audio_ctx || new AudioContext({ sampleRate: sr });
-  let buffer = await audio_ctx.decodeAudioData(encoded);
-  return buffer;
-}
-
-function playSound(sound, sr = sample_rate) {
-  audio_ctx = audio_ctx || new AudioContext({ sampleRate: sr });
-  let buffer = audio_ctx.createBuffer(1, sound.length, sample_rate);
-  buffer.getChannelData(0).set(sound);
-  let source = audio_ctx.createBufferSource();
-  source.buffer = buffer;
-  source.connect(audio_ctx.destination);
-  source.start();
-}
-
 async function drawACF(canvas, audio, num_frames) {
-  let fs = frame_size;
+  let fs = conf.frame_size;
   let ctx = canvas.getContext('2d');
   let fft_data = new Float32Array(num_frames * fs);
   let acf_data = new Float32Array(4 * num_frames * fs);
@@ -242,7 +246,7 @@ async function drawACF(canvas, audio, num_frames) {
         acf_data[t * fs + f + i * num_frames * fs] = fft_frame[f] * freq_colors[4 * f + i];
   }
 
-  if (!ACF) {
+  if (!conf.acf) {
     res_data.set(acf_data);
   } else {
     let acf_frame = (data, i, t) => data
@@ -252,9 +256,12 @@ async function drawACF(canvas, audio, num_frames) {
     for (let t = 0; t < num_frames; t++) {
       for (let i = 0; i < 3; i++) {
         let f1 = acf_frame(acf_data, i, t);
-        let f2 = acf_frame(acf_data, i, Math.round(t + (1 - TSHIFT) * num_frames) % num_frames);
+        let f2 = acf_frame(acf_data, i, Math.round(t + (1 - conf.delay) * num_frames) % num_frames);
         let f3 = acf_frame(res_data, i, t);
-        xcorrelation(f1, f2, f3);
+        if (conf.delay != 0)
+          computeXCF(f1, f2, f3);
+        else
+          computeACF(f1, f3);
       }
     }
   }
@@ -266,7 +273,7 @@ async function drawFrames(ctx, rgba_data, num_frames) {
   let w = ctx.canvas.width;
   let h = ctx.canvas.height;
   let img = ctx.getImageData(0, 0, w, h);
-  let fs = frame_size;
+  let fs = conf.frame_size;
   let time = performance.now();
   let abs_max = 0.08 * max(rgba_data);
 
@@ -287,7 +294,7 @@ async function drawFrames(ctx, rgba_data, num_frames) {
     for (let x = 0; x < w / 2; x++) {
       let t, f;
 
-      if (!DISK) {
+      if (!conf.disk) {
         t = Math.abs(y / h * 2 - 1) * num_frames | 0;
         f = (x / w + 0.5) * fs | 0;
         t = clamp(t, 0, num_frames - 1);
@@ -296,10 +303,10 @@ async function drawFrames(ctx, rgba_data, num_frames) {
         if (r >= 1) continue;
         t = Math.min(num_frames - 1, r * num_frames | 0);
         f = ((a / Math.PI + 1) / 2 + 0.75) * fs;
-        f = f * SYMM; // vertical symmetry
+        f = f * conf.symm; // vertical symmetry
       }
 
-      let f_width = DISK ? num_frames / (t + 1) : 0;
+      let f_width = conf.disk ? num_frames / (t + 1) : 0;
 
       let r = getRgbaSmoothAvg(rgba_data, 0, t, f, f_width, num_frames);
       let g = getRgbaSmoothAvg(rgba_data, 1, t, f, f_width, num_frames);
@@ -328,13 +335,13 @@ async function drawFrames(ctx, rgba_data, num_frames) {
 function getRgbaSmoothAvg(rgba_data, rgba_idx, t, f, f_width, num_frames) {
   dcheck(rgba_idx >= 0 && rgba_idx <= 3);
   dcheck(t >= 0 && t < num_frames);
-  dcheck(f_width >= 0 && f_width <= frame_size);
-  dcheck(rgba_data.length == num_frames * frame_size * 4);
+  dcheck(f_width >= 0 && f_width <= conf.frame_size);
+  dcheck(rgba_data.length == num_frames * conf.frame_size * 4);
 
-  let fs = frame_size;
+  let fs = conf.frame_size;
   let nf = num_frames;
   let base = rgba_idx * nf * fs + t * fs;
-  let frame = rgba_data.subarray(base, base + frame_size);
+  let frame = rgba_data.subarray(base, base + conf.frame_size);
 
   return !f_width ?
     frame[((f | 0) % fs + fs) % fs] :
@@ -376,19 +383,21 @@ function readAudioFrame(audio, num_frames, frame_id, frame) {
 // output[i] = abs(FFT[i])^2
 function computeFFT(input, output) {
   dcheck(input.length == output.length);
-  let temp = FFT.expand(input);
-  let temp2 = FFT.forward(temp);
+  // let temp = FFT.expand(input);
+  // let temp2 = FFT.forward(temp);
+  let temp2 = ut.forwardFFT(input).array;
   FFT.sqr_abs(temp2, output);
-  dcheck(is_even(output));
+  // dcheck(is_even(output));
 }
 
 // https://en.wikipedia.org/wiki/Cross-correlation
-function xcorrelation(input1, input2, output) {
-  dcheck(input1.length == output.length);
-  dcheck(input2.length == output.length);
-  let fft1 = FFT.forward(FFT.expand(input1))
-  let fft2 = FFT.forward(FFT.expand(input2))
-  // dcheck(is_real(temp2));
+// fft_data1 = output of computeFFT()
+// fft_data2 = output of computeFFT()
+function computeXCF(fft_data1, fft_data2, output) {
+  dcheck(fft_data1.length == output.length);
+  dcheck(fft_data2.length == output.length);
+  let fft1 = FFT.forward(FFT.expand(fft_data1))
+  let fft2 = FFT.forward(FFT.expand(fft_data2))
   for (let i = 0; i < output.length; i++) {
     let re1 = fft1[2 * i], im1 = fft1[2 * i + 1];
     let re2 = fft2[2 * i], im2 = fft2[2 * i + 1];
@@ -397,7 +406,15 @@ function xcorrelation(input1, input2, output) {
     let im = -re1 * im2 + re2 * im1;
     output[i] = Math.sqrt(Math.sqrt(re * re + im * im));
   }
-  // dcheck(is_even(output));
+}
+
+// Same as computeXCF(input, input, output).
+// fft_data = output of computeFFT()
+function computeACF(fft_data, output) {
+  dcheck(fft_data.length == output.length);
+  // let fft = FFT.forward(FFT.expand(fft_data))
+  let fft = ut.forwardFFT(fft_data).array;
+  FFT.abs(fft, output);
 }
 
 function dcheck(x) {

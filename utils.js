@@ -46,9 +46,9 @@ export class Float32Tensor {
   }
 }
 
-export function forwardFFT(signal) {
-  let n = signal.length;
-  let res2 = forwardReFFT(signal);
+export function forwardFFT(signal_re) {
+  let n = signal_re.length;
+  let res2 = forwardReFFT(signal_re);
   return new Float32Tensor([n, 2], res2);
 }
 
@@ -316,18 +316,14 @@ export function readAudioFrame(signal, frame, num_frames, frame_id) {
   return frame;
 }
 
-export async function selectAudioFile() {
+export async function selectAudioFile(multiple = false) {
   let input = document.createElement('input');
   input.type = 'file';
   input.accept = 'audio/*';
-  input.multiple = false;
+  input.multiple = multiple;
   input.click();
-
-  let file = await new Promise((resolve, reject) => {
-    input.onchange = () => resolve(input.files[0]);
-  });
-
-  return file;
+  return await new Promise(resolve =>
+    input.onchange = () => resolve(multiple ? input.files : input.files[0]));
 }
 
 export async function decodeAudioFile(file, sample_rate) {
@@ -337,6 +333,21 @@ export async function decodeAudioFile(file, sample_rate) {
     let audio_buffer = await audio_ctx.decodeAudioData(encoded_data);
     let channel_data = audio_buffer.getChannelData(0);
     return channel_data;
+  } finally {
+    audio_ctx.close();
+  }
+}
+
+export async function playSound(sound_data, sample_rate) {
+  let audio_ctx = new AudioContext({ sampleRate: sample_rate });
+  try {
+    let buffer = audio_ctx.createBuffer(1, sound_data.length, sample_rate);
+    buffer.getChannelData(0).set(sound_data);
+    let source = audio_ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audio_ctx.destination);
+    source.start();
+    await new Promise(resolve => source.onended = resolve);
   } finally {
     audio_ctx.close();
   }
