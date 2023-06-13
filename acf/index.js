@@ -7,7 +7,7 @@ let gui = new dat.GUI({ name: 'Settings' });
 let conf = {};
 conf.acf = true;
 conf.disk = true;
-conf.symm = 1;
+conf.symm = 2;
 conf.delay = 0.0;
 conf.ts_min = 0.0;
 conf.ts_max = 15.0;
@@ -71,7 +71,7 @@ function initDebugUI() {
   gui.add(conf, 'sample_rate', 4000, 48000, 4000);
   gui.add(conf, 'acf');
   gui.add(conf, 'disk');
-  gui.add(conf, 'symm', 1, 12, 1);
+  gui.add(conf, 'symm', 1, 6, 1);
   gui.add(conf, 'delay', 0, 1, 0.001);
   // gui.add(conf, 'num_frames_xs', 64, 1024, 64);
   // gui.add(conf, 'num_frames_xl', 1024, 4096, 1024);
@@ -290,12 +290,12 @@ async function drawFrames(ctx, rgba_data, num_frames) {
     img.data[i + 3] = 255;
   };
 
-  for (let y = 0; y < h / 2; y++) {
+  for (let y = 0; y < h; y++) {
     for (let x = 0; x < w / 2; x++) {
       let t, f;
 
       if (!conf.disk) {
-        t = Math.abs(y / h * 2 - 1) * num_frames | 0;
+        t = Math.abs(y / h) * num_frames | 0;
         f = (x / w + 0.5) * fs | 0;
         t = clamp(t, 0, num_frames - 1);
       } else {
@@ -316,8 +316,8 @@ async function drawFrames(ctx, rgba_data, num_frames) {
 
       set_rgb(x, y, r, g, b);
       set_rgb(w - x - 1, y, r, g, b);
-      set_rgb(x, h - y - 1, r, g, b);
-      set_rgb(w - x - 1, h - y - 1, r, g, b);
+      // set_rgb(x, h - y - 1, r, g, b);
+      // set_rgb(w - x - 1, h - y - 1, r, g, b);
     }
 
     if (performance.now() > time + 250) {
