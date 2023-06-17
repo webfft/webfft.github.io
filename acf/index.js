@@ -1,21 +1,18 @@
 import { FFT } from 'https://soundshader.github.io/webfft.js';
 import * as ut from '/utils.js';
 
-const EPS = 1e-6;
-
 let gui = new dat.GUI({ name: 'Settings' });
 let conf = {};
 conf.acf = true;
 conf.disk = true;
-conf.symm = 2;
+conf.symm = 3;
 conf.delay = 0.0;
-conf.ts_min = 0.0;
-conf.ts_max = 15.0;
-conf.frame_size = 4096;
-conf.sample_rate = 16000;
+conf.s2_sens = 0.005;
+conf.max_duration = 1.5;
+conf.frame_size = 2048;
+conf.sample_rate = 12000;
 conf.num_frames_xs = 256;
 conf.num_frames_xl = 1024;
-let audio_ctx = null;
 let sound_files = [];
 let waveform = null;
 let freq_colors = null;
@@ -27,11 +24,8 @@ let sample_files = [
   'ncnfu', 'nocu', 'nofu', 'obu', 'ocu', 'ofr', 'omcr',
   'omcu', 'omfr', 'omfu', 'probr', 'profu', 'prombr', 'prombu'];
 
-let hann = (x, a = 0, b = 1) => x > a && x < b ? Math.sin(Math.PI * (x - a) / (b - a)) ** 2 : 0
-let hann_step = (x, a, b) => x < a ? 0 : x > b ? 1 : hann(0.5 * (x - a) / (b - a));
-let hard_step = (x, a, b) => x >= a && x < b ? 1 : 0;
-let fract = x => x - Math.floor(x);
-let sleep = t => new Promise(resolve => setTimeout(resolve, t));
+let hann = (x, a = 0, b = 1) => ut.hann((x - a) / (b - a));
+let sleep = ut.sleep;
 
 async function main() {
   initDebugUI();
@@ -67,16 +61,13 @@ async function main() {
 function initDebugUI() {
   gui.close();
 
-  gui.add(conf, 'frame_size', { 4096: 4096, 2048: 2048, 1024: 1024 });
+  gui.add(conf, 'num_frames_xl', { 4096: 4096, 2048: 2048, 1024: 1024 });
+  gui.add(conf, 'frame_size', { 8192: 8192, 4096: 4096, 2048: 2048, 1024: 1024 });
   gui.add(conf, 'sample_rate', 4000, 48000, 4000);
   gui.add(conf, 'acf');
   gui.add(conf, 'disk');
   gui.add(conf, 'symm', 1, 6, 1);
   gui.add(conf, 'delay', 0, 1, 0.001);
-  // gui.add(conf, 'num_frames_xs', 64, 1024, 64);
-  // gui.add(conf, 'num_frames_xl', 1024, 4096, 1024);
-  // gui.add(conf, 'ts_min', 0, 60, 0.5);
-  // gui.add(conf, 'ts_max', 0, 60, 0.5);
 
   conf.confirm = updateConfig;
   gui.add(conf, 'confirm');
@@ -190,19 +181,42 @@ async function renderWaveform(canvas, waveform, num_frames) {
 function prepareWaveform(waveform) {
   let n = waveform.length, fs = conf.frame_size;
 
+  let s2_find = (t_min, t_max, fn_test) => {
+    dcheck(t_min >= 0 && t_min < n);
+    dcheck(t_max >= 0 && t_max < n);
+    let dir = Math.sign(t_max - t_min);
+    let len = Math.abs(t_max - t_min);
+    dcheck(dir != 0 && len > 0);
+    let sum = 0;
+
+    for (let i = t_min; Math.abs(i - t_min) <= len; i += dir) {
+      let x = waveform[i];
+      let j = i - dir * fs;
+      let y = dir * (j - t_min) < 0 ? 0 : waveform[j];
+      sum += x * x - y * y;
+      if (fn_test(sum / fs))
+        return i;
+    }
+
+    return n;
+  };
+
+  let s2_max = 0;
+  s2_find(0, n - 1, sum => void (s2_max = Math.max(s2_max, sum)));
+
+  let t_min = s2_find(0, n - 1, sum => sum / s2_max > conf.s2_sens);
+  let t_max2 = Math.min(n - 1, Math.floor(t_min + conf.max_duration * conf.sample_rate));
+  let t_max = s2_find(t_max2, t_min, sum => sum / s2_max > conf.s2_sens);
+
+  log('s2_max:', s2_max.toFixed(2), 't:', t_min + '..' + t_max,
+    ((t_max - t_min) / conf.sample_rate).toFixed(2), 'sec');
+
   // trim zeros at both ends
-  let i = 0, j = n - 1;
-  while (i < j && Math.abs(waveform[i]) < EPS) i++;
-  while (i < j && Math.abs(waveform[j]) < EPS) j--;
-  waveform = waveform.subarray(i, j + 1).subarray(
-    conf.ts_min * conf.sample_rate | 0, conf.ts_max * conf.sample_rate | 0);
-  n = waveform.length;
-
+  waveform = waveform.subarray(t_min, t_max + 1);
   // need some padding on both ends for smooth edges
-  let pad = fs / 2 | 0;
-  let tmp = new Float32Array(n + 2 * pad);
+  let pad = fs | 0;
+  let tmp = new Float32Array(waveform.length + 2 * pad);
   tmp.set(waveform, pad);
-
   return tmp;
 }
 
@@ -233,7 +247,7 @@ async function drawACF(canvas, audio, num_frames) {
 
   for (let t = 0; t < num_frames; t++) {
     let frame = new Float32Array(fs);
-    readAudioFrame(audio, num_frames, t, frame);
+    ut.readAudioFrame(audio, frame, num_frames, t);
     computeFFT(frame, frame);
     fft_data.subarray(t * fs, (t + 1) * fs).set(frame);
   }
@@ -275,7 +289,7 @@ async function drawFrames(ctx, rgba_data, num_frames) {
   let img = ctx.getImageData(0, 0, w, h);
   let fs = conf.frame_size;
   let time = performance.now();
-  let abs_max = 0.08 * max(rgba_data);
+  let abs_max = 0.08 * array_max(rgba_data, (x) => Math.abs(x));
 
   // for (let i = 0; i < num_frames * fs; i++)
   //   abs_max = Math.max(abs_max, Math.abs(rgba_data[i * 4 + 3]));
@@ -366,20 +380,6 @@ function getSmoothAvg(frame, f, f_width) {
   return sum / w_sum;
 }
 
-function readAudioFrame(audio, num_frames, frame_id, frame) {
-  dcheck(frame_id >= 0 && frame_id < num_frames);
-  let n = audio.length;
-  let fs = frame.length;
-  let step = (n - fs) / num_frames;
-  let t = frame_id * step | 0;
-
-  dcheck(t + fs <= n);
-  frame.set(audio.subarray(t, t + fs));
-
-  for (let i = 0; i < fs; i++)
-    frame[i] *= hann(i / fs);
-}
-
 // output[i] = abs(FFT[i])^2
 function computeFFT(input, output) {
   dcheck(input.length == output.length);
@@ -459,31 +459,11 @@ function mix(a, b, x) {
   return a * (1 - x) + b * x;
 }
 
-function is_real(a) {
-  let n = a.length;
-  for (let i = 1; i < n; i += 2)
-    if (Math.abs(a[i]) > EPS)
-      return false;
-  return true;
-}
-
-function is_even(a) {
-  let n = a.length;
-  for (let i = 1; i < n / 2; i++)
-    if (Math.abs(a[i] - a[n - i]) > EPS)
-      return false;
-  return true;
-}
-
-function max(a, mul = 1) {
+function array_max(a, map_fn = (x) => x) {
   let x = a[0], n = a.length;
   for (let i = 1; i < n; i++)
-    x = Math.max(x, mul * a[i]);
+    x = Math.max(x, map_fn(a[i]));
   return x;
-}
-
-function min(a) {
-  return -max(a, -1);
 }
 
 function xy2ra(x, y) {

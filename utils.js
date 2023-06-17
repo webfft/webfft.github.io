@@ -7,6 +7,7 @@ export const mix = (a, b, x) => a * (1 - x) + b * x;
 export const step = (min, x) => x < min ? 0 : 1;
 export const clamp = (x, min = 0, max = 1) => Math.max(Math.min(x, max), min);
 export const hann = (x) => x > 0 && x < 1 ? Math.sin(Math.PI * x) ** 2 : 0;
+export const fract = (x) => x - Math.floor(x);
 export const reim2 = (re, im) => re * re + im * im;
 export const dcheck = (x) => { if (x) return; debugger; throw new Error('dcheck failed'); }
 
