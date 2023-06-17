@@ -5,7 +5,7 @@ let gui = new dat.GUI({ name: 'Settings' });
 let conf = {};
 conf.acf = true;
 conf.disk = true;
-conf.symm = 3;
+conf.symm = 6;
 conf.delay = 0.0;
 conf.s2_sens = 0.005;
 conf.max_duration = 1.5;
@@ -29,26 +29,6 @@ let sleep = ut.sleep;
 
 async function main() {
   initDebugUI();
-
-  $('#load').onclick = async () => {
-    $('#sounds').innerHTML = '';
-    sound_files = await ut.selectAudioFile(true);
-    log('Selected files:', sound_files.length);
-    await renderSoundFilesAsGrid();
-    if (sound_files.length == 1)
-      saveWaveform();
-  };
-
-  $('#init').onclick = async () => {
-    $('#init').onclick = null;
-    $('#sounds').innerHTML = '';
-    sound_files = [];
-    await downloadSamples();
-    await renderSoundFilesAsGrid();
-  };
-
-  $('#play').onclick = () => waveform && ut.playSound(waveform, conf.sample_rate);
-
   initFreqColors();
   loadWaveform();
 
@@ -58,42 +38,68 @@ async function main() {
   }
 }
 
+function playCurrentSound() {
+  if (waveform)
+    ut.playSound(waveform, conf.sample_rate);
+}
+
+async function loadSounds() {
+  $('#sounds').innerHTML = '';
+  sound_files = await ut.selectAudioFile(true);
+  log('Selected files:', sound_files.length);
+  await renderSoundFilesAsGrid();
+  if (sound_files.length == 1)
+    saveWaveform();
+}
+
+async function showVowels() {
+  $('#sounds').innerHTML = '';
+  sound_files = [];
+  await downloadSamples();
+  await renderSoundFilesAsGrid();
+}
+
 function initDebugUI() {
   gui.close();
 
-  gui.add(conf, 'num_frames_xl', { 4096: 4096, 2048: 2048, 1024: 1024 });
-  gui.add(conf, 'frame_size', { 8192: 8192, 4096: 4096, 2048: 2048, 1024: 1024 });
+  gui.add(conf, 'num_frames_xl', 1024, 2048, 1024);
+  gui.add(conf, 'frame_size', 1024, 8192, 1024);
   gui.add(conf, 'sample_rate', 4000, 48000, 4000);
-  gui.add(conf, 'acf');
-  gui.add(conf, 'disk');
-  gui.add(conf, 'symm', 1, 6, 1);
-  gui.add(conf, 'delay', 0, 1, 0.001);
+  gui.add(conf, 'symm', 1, 12, 1);
 
-  conf.confirm = updateConfig;
-  gui.add(conf, 'confirm');
-}
+  conf.onsounds = loadSounds;
+  conf.onvowels = showVowels;
+  conf.onplaysound = playCurrentSound;
 
-function updateConfig() {
-  initFreqColors();
+  gui.add(conf, 'onsounds', 'Add Sounds');
+  gui.add(conf, 'onvowels', 'Show Vowels');
+  gui.add(conf, 'onplaysound', 'Play Sound');
 }
 
 function initFreqColors() {
-  if (freq_colors && freq_colors.length == 4 * conf.frame_size)
-    return;
+  let fs = conf.frame_size, sr = conf.sample_rate;
+  if (freq_colors && freq_colors.length == 4 * fs)
+    return freq_colors;
 
-  freq_colors = new Float32Array(4 * conf.frame_size);
+  freq_colors = new Float32Array(4 * fs);
 
-  for (let i = 0; i < conf.frame_size; i++) {
-    let f = Math.min(i, conf.frame_size - i) / conf.frame_size * 2; // 0..1
-    let r = hann(f, 0.0, 0.1) + hann(f, 0.3, 0.4);
-    let g = hann(f, 0.0, 0.3) + hann(f, 0.3, 0.6);
-    let b = hann(f, 0.0, 0.7) + hann(f, 0.3, 1.0);
+  for (let i = 0; i < fs; i++) {
+    let k = Math.min(i, fs - i) / fs; // 0..0.5
+    let f = ut.fract(k * sr / 6000);
+    let r = hann(f, 0.0, 0.05) + hann(f, 0.3, 0.4) / 2 - hann(f, 0.0, 0.4) / 3;
+    let g = hann(f, 0.0, 0.25) + hann(f, 0.3, 0.6) / 2 - hann(f, 0.0, 0.6) / 3;
+    let b = hann(f, 0.0, 0.75) + hann(f, 0.2, 1.0) / 2 - hann(f, 0.0, 1.0) / 3;
+    let s = Math.abs(r + g + b) + 0.01;
+    dcheck(s != 0 || f == 0 || f == 1);
 
-    freq_colors[4 * i + 0] = r;
-    freq_colors[4 * i + 1] = g;
-    freq_colors[4 * i + 2] = b;
+    freq_colors[4 * i + 0] = r / s;
+    freq_colors[4 * i + 1] = g / s;
+    freq_colors[4 * i + 2] = b / s;
     freq_colors[4 * i + 3] = 1;
   }
+
+  dcheck_array(freq_colors);
+  return freq_colors;
 }
 
 async function downloadSamples(min = 10, max = 38) {
@@ -244,6 +250,7 @@ async function drawACF(canvas, audio, num_frames) {
   let fft_data = new Float32Array(num_frames * fs);
   let acf_data = new Float32Array(4 * num_frames * fs);
   let res_data = new Float32Array(4 * num_frames * fs);
+  let freq_colors = initFreqColors();
 
   for (let t = 0; t < num_frames; t++) {
     let frame = new Float32Array(fs);
@@ -252,13 +259,22 @@ async function drawACF(canvas, audio, num_frames) {
     fft_data.subarray(t * fs, (t + 1) * fs).set(frame);
   }
 
+  dcheck_array(fft_data);
+
   for (let t = 0; t < num_frames; t++) {
     let fft_frame = fft_data.subarray(t * fs, (t + 1) * fs);
 
-    for (let f = 0; f < fs; f++)
-      for (let i = 0; i < 3; i++)
-        acf_data[t * fs + f + i * num_frames * fs] = fft_frame[f] * freq_colors[4 * f + i];
+    for (let f = 0; f < fs; f++) {
+      for (let i = 0; i < 3; i++) {
+        let r = fft_frame[f] * freq_colors[4 * f + i];
+        acf_data[t * fs + f + i * num_frames * fs] = r;
+        dcheck(Number.isFinite(r));
+      }
+    }
+
   }
+
+  dcheck_array(acf_data);
 
   if (!conf.acf) {
     res_data.set(acf_data);
@@ -276,6 +292,7 @@ async function drawACF(canvas, audio, num_frames) {
           computeXCF(f1, f2, f3);
         else
           computeACF(f1, f3);
+        dcheck(Number.isFinite(f3[0]));
       }
     }
   }
@@ -289,7 +306,7 @@ async function drawFrames(ctx, rgba_data, num_frames) {
   let img = ctx.getImageData(0, 0, w, h);
   let fs = conf.frame_size;
   let time = performance.now();
-  let abs_max = 0.08 * array_max(rgba_data, (x) => Math.abs(x));
+  let abs_max = 0.08 * array_max(rgba_data, x => Math.abs(x));
 
   // for (let i = 0; i < num_frames * fs; i++)
   //   abs_max = Math.max(abs_max, Math.abs(rgba_data[i * 4 + 3]));
@@ -325,6 +342,8 @@ async function drawFrames(ctx, rgba_data, num_frames) {
       let r = getRgbaSmoothAvg(rgba_data, 0, t, f, f_width, num_frames);
       let g = getRgbaSmoothAvg(rgba_data, 1, t, f, f_width, num_frames);
       let b = getRgbaSmoothAvg(rgba_data, 2, t, f, f_width, num_frames);
+      let s = r + g + b;
+      dcheck(s >= 0);
 
       // [r, g, b] = mv3x3_mul([16, 4, 1, 4, 16, 4, 4, 1, 16], [r, g, b]);
 
@@ -427,36 +446,13 @@ function log(...args) {
   console.log(args.join(' '));
 }
 
-function dot(a, b) {
-  let n = a.length, s = 0;
-  for (let i = 0; i < n; i++)
-    s += a[i] * b[i];
-  return s;
-}
-
 function clamp(x, min = 0, max = 1) {
   return Math.max(Math.min(x, max), min);
 }
 
-function interpolate(t, ps) {
-  let n = ps.length;
-  dcheck(n > 1);
-  if (t <= ps[0][0])
-    return ps[0][1];
-  for (let i = 1; i < n; i++) {
-    let a = ps[i - 1], b = ps[i];
-    if (t <= b[0])
-      return mix3(a[1], b[1], (t - a[0]) / (b[0] - a[0]));
-  }
-  return ps[n - 1][1];
-}
-
-function mix3(a, b, x) {
-  return [mix(a[0], b[0], x), mix(a[1], b[1], x), mix(a[2], b[2], x)];
-}
-
-function mix(a, b, x) {
-  return a * (1 - x) + b * x;
+function dcheck_array(a) {
+  for (let i = 0; i < a.length; i++)
+    dcheck(Number.isFinite(a[i]));
 }
 
 function array_max(a, map_fn = (x) => x) {
@@ -470,15 +466,6 @@ function xy2ra(x, y) {
   let r = Math.sqrt(x * x + y * y);
   let a = Math.atan2(y, x); // -PI..PI
   return [r, a]
-}
-
-function mv3x3_mul(m, v) {
-  dcheck(v.length == 3 && m.length == 9);
-  return [
-    v[0] * m[0] + v[1] * m[3] + v[2] * m[6],
-    v[0] * m[1] + v[1] * m[4] + v[2] * m[7],
-    v[0] * m[2] + v[1] * m[5] + v[2] * m[8],
-  ];
 }
 
 function $(s) {
