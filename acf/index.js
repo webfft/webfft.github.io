@@ -8,6 +8,7 @@ conf.disk = true;
 conf.symm = 6;
 conf.delay = 0.0;
 conf.s2_sens = 0.005;
+conf.rot_phi = 0.05;
 conf.max_duration = 1.5;
 conf.frame_size = 2048;
 conf.sample_rate = 12000;
@@ -66,6 +67,7 @@ function initDebugUI() {
   gui.add(conf, 'frame_size', 1024, 8192, 1024);
   gui.add(conf, 'sample_rate', 4000, 48000, 4000);
   gui.add(conf, 'symm', 1, 12, 1);
+  gui.add(conf, 'rot_phi', 0, 1, 0.001);
 
   conf.onsounds = loadSounds;
   conf.onvowels = showVowels;
@@ -95,7 +97,7 @@ function initFreqColors() {
     freq_colors[4 * i + 0] = r / s;
     freq_colors[4 * i + 1] = g / s;
     freq_colors[4 * i + 2] = b / s;
-    freq_colors[4 * i + 3] = 1;
+    freq_colors[4 * i + 3] = 1.0;
   }
 
   dcheck_array(freq_colors);
@@ -180,11 +182,11 @@ function renderSoundTag(canvas, text) {
 }
 
 async function renderWaveform(canvas, waveform, num_frames) {
-  let trimmed = prepareWaveform(waveform);
+  let trimmed = trimSilence(waveform);
   await drawACF(canvas, trimmed, num_frames);
 }
 
-function prepareWaveform(waveform) {
+function trimSilence(waveform) {
   let n = waveform.length, fs = conf.frame_size;
 
   let s2_find = (t_min, t_max, fn_test) => {
@@ -267,11 +269,22 @@ async function drawACF(canvas, audio, num_frames) {
     for (let f = 0; f < fs; f++) {
       for (let i = 0; i < 3; i++) {
         let r = fft_frame[f] * freq_colors[4 * f + i];
-        acf_data[t * fs + f + i * num_frames * fs] = r;
+        acf_data[t * fs + i * num_frames * fs + f] = r;
         dcheck(Number.isFinite(r));
       }
     }
+  }
 
+  if (conf.rot_phi > 0) {
+    let phi = 2 * Math.PI * conf.rot_phi;
+    let p = Math.cos(phi);
+    let q = Math.sin(phi);
+    for (let i = 0; i < acf_data.length; i += 2) {
+      let a = acf_data[i + 0];
+      let b = acf_data[i + 1];
+      acf_data[i + 0] = a * p - b * q;
+      acf_data[i + 1] = a * q + b * p;
+    }
   }
 
   dcheck_array(acf_data);
