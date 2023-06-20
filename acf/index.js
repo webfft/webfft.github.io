@@ -8,7 +8,7 @@ conf.disk = true;
 conf.symm = 6;
 conf.delay = 0.0;
 conf.s2_sens = 0.005;
-conf.rot_phi = 0.05;
+conf.rot_phi = 2.0;
 conf.max_duration = 1.5;
 conf.frame_size = 2048;
 conf.sample_rate = 12000;
@@ -67,7 +67,6 @@ function initDebugUI() {
   gui.add(conf, 'frame_size', 1024, 8192, 1024);
   gui.add(conf, 'sample_rate', 4000, 48000, 4000);
   gui.add(conf, 'symm', 1, 12, 1);
-  gui.add(conf, 'rot_phi', 0, 1, 0.001);
 
   conf.onsounds = loadSounds;
   conf.onvowels = showVowels;
@@ -276,14 +275,19 @@ async function drawACF(canvas, audio, num_frames) {
   }
 
   if (conf.rot_phi > 0) {
-    let phi = 2 * Math.PI * conf.rot_phi;
-    let p = Math.cos(phi);
-    let q = Math.sin(phi);
-    for (let i = 0; i < acf_data.length; i += 2) {
-      let a = acf_data[i + 0];
-      let b = acf_data[i + 1];
-      acf_data[i + 0] = a * p - b * q;
-      acf_data[i + 1] = a * q + b * p;
+    for (let c = 0; c < 4; c++) {
+      for (let t = 0; t < num_frames; t++) {
+        for (let f = 0; f < fs / 2; f++) {
+          let phi = 2 * Math.PI * t / num_frames * conf.rot_phi;
+          let re = Math.cos(phi);
+          let im = Math.sin(phi);
+          let i = c * num_frames * fs + t * fs + f * 2;
+          let a = acf_data[i + 0];
+          let b = acf_data[i + 1];
+          acf_data[i + 0] = a * re - b * im;
+          acf_data[i + 1] = a * im + b * re;
+        }
+      }
     }
   }
 
