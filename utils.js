@@ -354,6 +354,20 @@ export async function playSound(sound_data, sample_rate) {
   }
 }
 
+export async function recordAudio(sample_rate = 48000, max_duration = 1.0) {
+  let stream = await navigator.mediaDevices.getUserMedia({ audio: true, sampleRate: sample_rate });
+  try {
+    let recorder = new AudioRecorder(stream, sample_rate);
+    await recorder.start();
+    await sleep(max_duration * 1000);
+    let blob = await recorder.fetch();
+    await recorder.stop();
+    return blob;
+  } finally {
+    stream.getTracks().map(t => t.stop());
+  }
+}
+
 export class AudioRecorder {
   constructor(stream, sample_rate) {
     this.stream = stream;

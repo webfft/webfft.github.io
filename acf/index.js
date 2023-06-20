@@ -60,21 +60,31 @@ async function showVowels() {
   await renderSoundFilesAsGrid();
 }
 
-function initDebugUI() {
-  gui.close();
+async function recordMic() {
+  log('Recording audio');
+  let blob = await ut.recordAudio(conf.sample_rate, conf.max_duration);
+  blob.name = 'mic' + conf.sample_rate + 'hz';
+  log('Recorder audio:', blob);
+  sound_files.push(blob);
+  await renderSoundFilesAsGrid();
+}
 
+function initDebugUI() {
+  // gui.close();
   gui.add(conf, 'num_frames_xl', 1024, 2048, 1024);
   gui.add(conf, 'frame_size', 1024, 8192, 1024);
   gui.add(conf, 'sample_rate', 4000, 48000, 4000);
   gui.add(conf, 'symm', 1, 12, 1);
 
-  conf.onsounds = loadSounds;
-  conf.onvowels = showVowels;
-  conf.onplaysound = playCurrentSound;
+  let button = (name, callback) => {
+    conf[name] = callback;
+    gui.add(conf, name);
+  };
 
-  gui.add(conf, 'onsounds', 'Add Sounds');
-  gui.add(conf, 'onvowels', 'Show Vowels');
-  gui.add(conf, 'onplaysound', 'Play Sound');
+  button('load_audio', loadSounds);
+  button('show_vowels', showVowels);
+  button('play_sound', playCurrentSound);
+  button('record_mic', recordMic);
 }
 
 function initFreqColors() {
@@ -145,6 +155,8 @@ async function renderSoundFilesAsGrid() {
   log('Rendering sounds:', num);
 
   for (let id = 0; id < num; id++) {
+    if (sound_files[id].canvas)
+      continue; // already rendered
     let canvas = createCanvas(id + 1, conf.num_frames_xs);
     await renderSoundFile(id + 1, canvas, conf.num_frames_xs);
     await sleep(0);
@@ -167,8 +179,15 @@ async function renderSoundFile(id, canvas, num_frames) {
     }
   }
 
-  waveform && await renderWaveform(canvas, waveform, num_frames);
-  file && renderSoundTag(canvas, file.name.replace(/\.\w+$/, ''));
+  if (waveform) {
+    await renderWaveform(canvas, waveform, num_frames);
+  }
+
+  if (file) {
+    renderSoundTag(canvas, file.name.replace(/\.\w+$/, ''));
+    file.canvas = canvas;
+    file.waveform = waveform;
+  }
 }
 
 function renderSoundTag(canvas, text) {
