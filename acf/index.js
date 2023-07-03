@@ -8,7 +8,8 @@ conf.disk = true;
 conf.symm = 6;
 conf.delay = 0.0;
 conf.s2_sens = 0.005;
-conf.rot_phi = 2.0;
+conf.rot_phi = 0.0;
+conf.abs_max = 0.08;
 conf.max_duration = 1.5;
 conf.frame_size = 2048;
 conf.sample_rate = 12000;
@@ -293,23 +294,6 @@ async function drawACF(canvas, audio, num_frames) {
     }
   }
 
-  if (conf.rot_phi > 0) {
-    for (let c = 0; c < 4; c++) {
-      for (let t = 0; t < num_frames; t++) {
-        for (let f = 0; f < fs / 2; f++) {
-          let phi = 2 * Math.PI * t / num_frames * conf.rot_phi;
-          let re = Math.cos(phi);
-          let im = Math.sin(phi);
-          let i = c * num_frames * fs + t * fs + f * 2;
-          let a = acf_data[i + 0];
-          let b = acf_data[i + 1];
-          acf_data[i + 0] = a * re - b * im;
-          acf_data[i + 1] = a * im + b * re;
-        }
-      }
-    }
-  }
-
   dcheck_array(acf_data);
 
   if (!conf.acf) {
@@ -342,7 +326,7 @@ async function drawFrames(ctx, rgba_data, num_frames) {
   let img = ctx.getImageData(0, 0, w, h);
   let fs = conf.frame_size;
   let time = performance.now();
-  let abs_max = 0.08 * array_max(rgba_data, x => Math.abs(x));
+  let abs_max = conf.abs_max * array_max(rgba_data, x => Math.abs(x));
 
   // for (let i = 0; i < num_frames * fs; i++)
   //   abs_max = Math.max(abs_max, Math.abs(rgba_data[i * 4 + 3]));
@@ -467,8 +451,9 @@ function computeXCF(fft_data1, fft_data2, output) {
 // fft_data = output of computeFFT()
 function computeACF(fft_data, output) {
   dcheck(fft_data.length == output.length);
-  // let fft = FFT.forward(FFT.expand(fft_data))
-  let fft = ut.forwardFFT(fft_data).array;
+  let fft = FFT.forward(FFT.expand(fft_data))
+  // let fft2 = FFT.expand(fft_data);
+  // let fft = FFT.forward(fft2)
   FFT.abs(fft, output);
 }
 
