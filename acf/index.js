@@ -5,7 +5,8 @@ let gui = new dat.GUI({ name: 'Settings' });
 let conf = {};
 conf.acf = true;
 conf.disk = true;
-conf.symm = 6;
+conf.symm = 1;
+conf.nrep = 6;
 conf.delay = 0.0;
 conf.s2_sens = 0.005;
 conf.rot_phi = 0.0;
@@ -75,7 +76,7 @@ function initDebugUI() {
   gui.add(conf, 'num_frames_xl', 1024, 2048, 1024);
   gui.add(conf, 'frame_size', 1024, 8192, 1024);
   gui.add(conf, 'sample_rate', 4000, 48000, 4000);
-  gui.add(conf, 'symm', 1, 12, 1);
+  // gui.add(conf, 'nrep', 1, 12, 1);
 
   let button = (name, callback) => {
     conf[name] = callback;
@@ -201,8 +202,10 @@ function renderSoundTag(canvas, text) {
 }
 
 async function renderWaveform(canvas, waveform, num_frames) {
+  let ts = Date.now();
   let trimmed = trimSilence(waveform);
   await drawACF(canvas, trimmed, num_frames);
+  log('acf image completed in', Date.now() - ts, 'ms');
 }
 
 function trimSilence(waveform) {
@@ -265,9 +268,55 @@ function saveWaveform() {
   }
 }
 
-async function drawACF(canvas, audio, num_frames) {
+async function drawACF(canvas, signal, num_frames) {
   let fs = conf.frame_size;
-  let ctx = canvas.getContext('2d');
+  let nsymm = conf.symm;
+  let sub_signal = new Float32Array(signal.length / conf.symm | 0);
+  let res_image = new Float32Array(4 * num_frames * fs * nsymm);
+
+  for (let ks = 0; ks < nsymm; ks++) {
+    for (let i = 0; i < sub_signal.length; i++)
+      sub_signal[i] = signal[Math.min(ks + i * nsymm, signal.length - 1)];
+
+    let sub_image = await compACF(sub_signal, num_frames, fs);
+    dcheck(sub_image.length == 4 * num_frames * fs);
+
+    for (let t = 0; t < num_frames; t++) {
+      for (let i = 0; i < 4; i++) {
+        let src = readACF(sub_image, i, t, num_frames, fs);
+        let res = readACF(res_image, i, t, num_frames, fs * nsymm);
+        dcheck(src.length == fs);
+        dcheck(res.length == fs * nsymm);
+        // Need to swap left/right halves because
+        // in ACF the 0-th element is the largest.
+        res.set(src.subarray(fs / 2), fs * ks);
+        res.set(src.subarray(0, fs / 2), fs * ks + fs / 2);
+      }
+    }
+  }
+
+  await drawFrames(canvas, res_image, num_frames, fs * nsymm,
+    (data, c, t, f, fw) => getRgbaSmoothAvg(data, c, t, f, fw, num_frames, fs * nsymm));
+
+  let rad_frames = num_frames * 2 * Math.PI | 0;
+  let rad_fs = 32;
+  let rad_image = await compACF(signal, rad_frames, rad_fs, false);
+  let rad_rmin = 0.85;
+
+  await drawFrames(canvas, rad_image, rad_frames, rad_fs, (data, c, t, f) => {
+    // dcheck(f >= 0 && f <= rad_fs * conf.nrep + 1);
+    dcheck(t >= 0 && t < rad_frames);
+    let rad_t = (f / rad_fs / conf.nrep * rad_frames | 0) % rad_frames;
+    let rad_f = (t / rad_frames - rad_rmin) / (1.00 - rad_rmin);
+    let rad_frame = readACF(rad_image, c, rad_t, rad_frames, rad_fs);
+    let i = clamp(rad_f * rad_frame.length | 0, 0, rad_fs - 1);
+    let r = rad_frame[(i + rad_fs / 2) % rad_fs];
+    return r;
+  }, rad_rmin, 1.00, 1.00);
+}
+
+async function compACF(signal, num_frames, frame_size, use_fc = true) {
+  let fs = frame_size;
   let fft_data = new Float32Array(num_frames * fs);
   let acf_data = new Float32Array(4 * num_frames * fs);
   let res_data = new Float32Array(4 * num_frames * fs);
@@ -275,7 +324,7 @@ async function drawACF(canvas, audio, num_frames) {
 
   for (let t = 0; t < num_frames; t++) {
     let frame = new Float32Array(fs);
-    ut.readAudioFrame(audio, frame, num_frames, t);
+    ut.readAudioFrame(signal, frame, num_frames, t);
     computeFFT(frame, frame);
     fft_data.subarray(t * fs, (t + 1) * fs).set(frame);
   }
@@ -287,7 +336,7 @@ async function drawACF(canvas, audio, num_frames) {
 
     for (let f = 0; f < fs; f++) {
       for (let i = 0; i < 3; i++) {
-        let r = fft_frame[f] * freq_colors[4 * f + i];
+        let r = fft_frame[f] * (use_fc ? freq_colors[4 * f + i] : 1);
         acf_data[t * fs + i * num_frames * fs + f] = r;
         dcheck(Number.isFinite(r));
       }
@@ -299,15 +348,13 @@ async function drawACF(canvas, audio, num_frames) {
   if (!conf.acf) {
     res_data.set(acf_data);
   } else {
-    let acf_frame = (data, i, t) => data
-      .subarray(i * num_frames * fs, (i + 1) * num_frames * fs)
-      .subarray(t * fs, (t + 1) * fs);
-
     for (let t = 0; t < num_frames; t++) {
       for (let i = 0; i < 3; i++) {
-        let f1 = acf_frame(acf_data, i, t);
-        let f2 = acf_frame(acf_data, i, Math.round(t + (1 - conf.delay) * num_frames) % num_frames);
-        let f3 = acf_frame(res_data, i, t);
+        let t1 = t;
+        let t2 = Math.round(t + (1 - conf.delay) * num_frames) % num_frames;
+        let f1 = readACF(acf_data, i, t1, num_frames, fs);
+        let f2 = readACF(acf_data, i, t2, num_frames, fs);
+        let f3 = readACF(res_data, i, t1, num_frames, fs);
         if (conf.delay != 0)
           computeXCF(f1, f2, f3);
         else
@@ -317,16 +364,24 @@ async function drawACF(canvas, audio, num_frames) {
     }
   }
 
-  await drawFrames(ctx, res_data, num_frames);
+  return res_data;
 }
 
-async function drawFrames(ctx, rgba_data, num_frames) {
-  let w = ctx.canvas.width;
-  let h = ctx.canvas.height;
+function readACF(data, i_rgba, t, num_frames, frame_size) {
+  let fs = frame_size;
+  return data
+    .subarray(i_rgba * num_frames * fs, (i_rgba + 1) * num_frames * fs)
+    .subarray(t * fs, (t + 1) * fs);
+}
+
+async function drawFrames(canvas, rgba_data, num_frames, frame_size, fn_rgba, r_min = 0, r_max = 1, a_max = 0) {
+  let w = canvas.width;
+  let h = canvas.height;
+  let ctx = canvas.getContext('2d');
   let img = ctx.getImageData(0, 0, w, h);
-  let fs = conf.frame_size;
+  let fs = frame_size;
   let time = performance.now();
-  let abs_max = conf.abs_max * array_max(rgba_data, x => Math.abs(x));
+  let abs_max = (a_max || conf.abs_max) * array_max(rgba_data, x => Math.abs(x));
 
   // for (let i = 0; i < num_frames * fs; i++)
   //   abs_max = Math.max(abs_max, Math.abs(rgba_data[i * 4 + 3]));
@@ -342,33 +397,32 @@ async function drawFrames(ctx, rgba_data, num_frames) {
   };
 
   for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w / 2; x++) {
-      let t, f;
+    for (let x = 0; x < w; x++) {
+      let t, f, r, a;
 
       if (!conf.disk) {
-        t = Math.abs(y / h) * num_frames | 0;
-        f = (x / w + 0.5) * fs | 0;
+        r = Math.abs(y / h);
+        if (r >= r_max || r <= r_min) continue;
+        t = r * num_frames | 0;
+        f = (x / w + 0.5) * fs;
         t = clamp(t, 0, num_frames - 1);
       } else {
-        let [r, a] = xy2ra(x / w * 2 - 1, y / h * 2 - 1);
-        if (r >= 1) continue;
+        [r, a] = xy2ra(x / w * 2 - 1, y / h * 2 - 1);
+        if (r >= r_max || r <= r_min) continue;
         t = Math.min(num_frames - 1, r * num_frames | 0);
         f = ((a / Math.PI + 1) / 2 + 0.75) * fs;
-        f = f * conf.symm; // vertical symmetry
+        f = f * conf.nrep; // vertical symmetry
       }
 
       let f_width = conf.disk ? num_frames / (t + 1) : 0;
 
-      let r = getRgbaSmoothAvg(rgba_data, 0, t, f, f_width, num_frames);
-      let g = getRgbaSmoothAvg(rgba_data, 1, t, f, f_width, num_frames);
-      let b = getRgbaSmoothAvg(rgba_data, 2, t, f, f_width, num_frames);
-      let s = r + g + b;
-      dcheck(s >= 0);
+      let cr = fn_rgba(rgba_data, 0, t, f, f_width, num_frames, fs);
+      let cg = fn_rgba(rgba_data, 1, t, f, f_width, num_frames, fs);
+      let cb = fn_rgba(rgba_data, 2, t, f, f_width, num_frames, fs);
+      dcheck(Math.abs(cr) + Math.abs(cg) + Math.abs(cb) >= 0);
 
-      // [r, g, b] = mv3x3_mul([16, 4, 1, 4, 16, 4, 4, 1, 16], [r, g, b]);
-
-      set_rgb(x, y, r, g, b);
-      set_rgb(w - x - 1, y, r, g, b);
+      set_rgb(x, y, cr, cg, cb);
+      // set_rgb(w - x - 1, y, r, g, b);
       // set_rgb(x, h - y - 1, r, g, b);
       // set_rgb(w - x - 1, h - y - 1, r, g, b);
     }
@@ -385,16 +439,16 @@ async function drawFrames(ctx, rgba_data, num_frames) {
 }
 
 // f doesn't have to be an integer
-function getRgbaSmoothAvg(rgba_data, rgba_idx, t, f, f_width, num_frames) {
+function getRgbaSmoothAvg(rgba_data, rgba_idx, t, f, f_width, num_frames, frame_size) {
   dcheck(rgba_idx >= 0 && rgba_idx <= 3);
   dcheck(t >= 0 && t < num_frames);
-  dcheck(f_width >= 0 && f_width <= conf.frame_size);
-  dcheck(rgba_data.length == num_frames * conf.frame_size * 4);
+  dcheck(f_width >= 0 && f_width <= frame_size);
+  dcheck(rgba_data.length == num_frames * frame_size * 4);
 
-  let fs = conf.frame_size;
+  let fs = frame_size;
   let nf = num_frames;
   let base = rgba_idx * nf * fs + t * fs;
-  let frame = rgba_data.subarray(base, base + conf.frame_size);
+  let frame = rgba_data.subarray(base, base + fs);
 
   return !f_width ?
     frame[((f | 0) % fs + fs) % fs] :
