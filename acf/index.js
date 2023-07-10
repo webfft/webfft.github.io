@@ -7,13 +7,14 @@ conf.acf = true;
 conf.disk = true;
 conf.symm = 1;
 conf.nrep = 6;
+conf.tstep = 4;
 conf.delay = 0.0;
 conf.s2_sens = 0.005;
 conf.rot_phi = 0.0;
 conf.abs_max = 0.08;
 conf.max_duration = 1.5;
 conf.frame_size = 2048;
-conf.sample_rate = 12000;
+conf.sample_rate = 48000;
 conf.num_frames_xs = 256;
 conf.num_frames_xl = 1024;
 let sound_files = [];
@@ -76,7 +77,8 @@ function initDebugUI() {
   gui.add(conf, 'num_frames_xl', 1024, 2048, 1024);
   gui.add(conf, 'frame_size', 1024, 8192, 1024);
   gui.add(conf, 'sample_rate', 4000, 48000, 4000);
-  // gui.add(conf, 'nrep', 1, 12, 1);
+  gui.add(conf, 'tstep', 1, 16, 1);
+  gui.add(conf, 'nrep', 1, 12, 1);
 
   let button = (name, callback) => {
     conf[name] = callback;
@@ -98,7 +100,7 @@ function initFreqColors() {
 
   for (let i = 0; i < fs; i++) {
     let k = Math.min(i, fs - i) / fs; // 0..0.5
-    let f = ut.fract(k * sr / 6000);
+    let f = ut.fract(k * sr / conf.tstep / 6000);
     let r = hann(f, 0.0, 0.05) + hann(f, 0.3, 0.4) / 2 - hann(f, 0.0, 0.4) / 3;
     let g = hann(f, 0.0, 0.25) + hann(f, 0.3, 0.6) / 2 - hann(f, 0.0, 0.6) / 3;
     let b = hann(f, 0.0, 0.75) + hann(f, 0.2, 1.0) / 2 - hann(f, 0.0, 1.0) / 3;
@@ -244,7 +246,7 @@ function trimSilence(waveform) {
   // trim zeros at both ends
   waveform = waveform.subarray(t_min, t_max + 1);
   // need some padding on both ends for smooth edges
-  let pad = fs | 0;
+  let pad = fs * conf.tstep | 0;
   let tmp = new Float32Array(waveform.length + 2 * pad);
   tmp.set(waveform, pad);
   return tmp;
@@ -298,7 +300,7 @@ async function drawACF(canvas, signal, num_frames) {
   await drawFrames(canvas, res_image, num_frames, fs * nsymm,
     (data, c, t, f, fw) => getRgbaSmoothAvg(data, c, t, f, fw, num_frames, fs * nsymm));
 
-  let rad_frames = num_frames * 2 * Math.PI | 0;
+  /* let rad_frames = num_frames * 2 * Math.PI | 0;
   let rad_fs = 32;
   let rad_image = await compACF(signal, rad_frames, rad_fs, false);
   let rad_rmin = 0.85;
@@ -312,7 +314,7 @@ async function drawACF(canvas, signal, num_frames) {
     let i = clamp(rad_f * rad_frame.length | 0, 0, rad_fs - 1);
     let r = rad_frame[(i + rad_fs / 2) % rad_fs];
     return r;
-  }, rad_rmin, 1.00, 1.00);
+  }, rad_rmin, 1.00, 1.00); */
 }
 
 async function compACF(signal, num_frames, frame_size, use_fc = true) {
@@ -324,7 +326,7 @@ async function compACF(signal, num_frames, frame_size, use_fc = true) {
 
   for (let t = 0; t < num_frames; t++) {
     let frame = new Float32Array(fs);
-    ut.readAudioFrame(signal, frame, num_frames, t);
+    ut.readAudioFrame(signal, frame, num_frames, t, conf.tstep);
     computeFFT(frame, frame);
     fft_data.subarray(t * fs, (t + 1) * fs).set(frame);
   }

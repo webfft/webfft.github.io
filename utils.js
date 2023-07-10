@@ -290,12 +290,12 @@ export function getAmpDensity(spectrogram, num_bins = 1024, amp2_map = Math.sqrt
 }
 
 // frame_size = fft_bins * 2
-export function readAudioFrame(signal, frame, num_frames, frame_id) {
+export function readAudioFrame(signal, frame, num_frames, frame_id, t_step = 1) {
   let len = frame.length;
   let n = signal.length;
   let step = signal.length / num_frames;
   let base = frame_id * step | 0;
-  let len0 = Math.min(len, n - base);
+  let len0 = Math.min(len, (n - 1 - base) / t_step | 0);
 
   // frame.set(
   //   signal.subarray(
@@ -309,7 +309,8 @@ export function readAudioFrame(signal, frame, num_frames, frame_id) {
 
   for (let i = 0; i < len0; i++) {
     let h = hann(i / len);
-    let s = signal[i + base];
+    let k = base + t_step * i | 0;
+    let s = k < n ? signal[k] : 0;
     let j = (i + base) % len;
     frame[j] = h * s;
   }
