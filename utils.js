@@ -45,6 +45,28 @@ export class Float32Tensor {
     dcheck(d[0] == 1);
     return new Float32Tensor(d.slice(1), t.array);
   }
+
+  clone() {
+    return new Float32Tensor(this.dimensions.slice(), this.array.slice(0));
+  }
+}
+
+export function sumTensors(...tensors) {
+  let res = tensors[0].clone();
+
+  for (let t = 1; t < tensors.length; t++) {
+    let src = tensors[0];
+    dcheck(src instanceof Float32Tensor);
+    dcheck(src.array.length == res.array.length);
+    for (let i = 0; i < src.array.length; i++)
+      res.array[i] += src.array[i];
+  }
+
+  return res;
+}
+
+export function computeFFT(src, res) {
+  return FFT.forward(src, res);
 }
 
 export function forwardFFT(signal_re) {
@@ -59,6 +81,44 @@ export function inverseFFT(frame) {
   let sig2 = new Float32Array(n * 2);
   FFT.inverse(frame.array, sig2);
   return FFT.re(sig2);
+}
+
+// Input: Float32Tensor, H x W x 2
+// Output: Float32Tensor, H x W x 2
+export function computeFFT2D(input) {
+  let [h, w, rsn] = input.dimensions;
+  dcheck(input.rank == 3 && rsn == 2);
+
+  let output = new Float32Tensor([h, w, 2]);
+  let row = new Float32Array(w * 2);
+  let col = new Float32Array(h * 2);
+  let tmp = new Float32Array(h * 2);
+
+  // row-by-row fft
+  for (let y = 0; y < h; y++) {
+    let sig = input.subtensor(y).array;
+    FFT.forward(sig, row);
+    output.subtensor(y).array.set(row);
+  }
+
+  // col-by-col fft
+  for (let x = 0; x < w; x++) {
+    for (let y = 0; y < h; y++) {
+      let p = y * w + x;
+      col[y * 2 + 0] = output.array[p * 2 + 0];
+      col[y * 2 + 1] = output.array[p * 2 + 1];
+    }
+
+    FFT.forward(col, tmp);
+
+    for (let y = 0; y < h; y++) {
+      let p = y * w + x;
+      output.array[p * 2 + 0] = tmp[y * 2 + 0];
+      output.array[p * 2 + 1] = tmp[y * 2 + 1];
+    }
+  }
+
+  return output;
 }
 
 // http://www.robinscheibler.org/2013/02/13/real-fft.html
@@ -142,18 +202,22 @@ export function applyBandpassFilter(signal, filter_fn) {
 }
 
 export function drawSpectrogram(canvas, spectrogram, {
-  db_log = s => s, rgb_fn = s => [s * 9, s * 3, s], reim_fn = reim2 }) {
+  db_log = s => s, rgb_fn = s => [s * 9, s * 3, s], sqrabs_max = 0,
+  reim_fn = reim2, fs_full = false, clear = true } = {}) {
+
   let h = canvas.height;
   let w = canvas.width;
   let ctx = canvas.getContext('2d');
   let img = ctx.getImageData(0, 0, w, h);
-  let sqrabs_max = getFrameMax(spectrogram.array, reim_fn);
+  sqrabs_max = sqrabs_max || getSpectrogramMax(spectrogram, reim_fn);
   let rgb_reim = (re, im) => rgb_fn(db_log(reim_fn(re, im) / sqrabs_max));
   let num_frames = spectrogram.dimensions[0];
 
+  if (clear) img.data.fill(0);
+
   for (let x = 0; x < w; x++) {
     let frame = spectrogram.subtensor(x / w * num_frames | 0);
-    drawSpectrogramFrame(img, frame, x, rgb_reim);
+    drawSpectrogramFrame(img, frame, x, rgb_reim, fs_full);
   }
 
   ctx.putImageData(img, 0, 0);
@@ -180,6 +244,10 @@ export function getMaskedSpectrogram(spectrogram1, mask_fn) {
   return spectrogram2;
 }
 
+export function getSpectrogramMax(sg, fn = reim2) {
+  return getFrameMax(sg.array, fn);
+}
+
 export function getFrameMax(data, reim_fn = reim2) {
   return aggFrameData(data, reim_fn, Math.max, 0);
 }
@@ -198,26 +266,27 @@ function aggFrameData(data, fn, reduce, initial = 0) {
   return max;
 }
 
-function drawSpectrogramFrame(img, frame, x, rgb_fn) {
+function drawSpectrogramFrame(img, frame, x, rgb_fn, fs_full) {
   let frame_size = frame.dimensions[0];
   let w = img.width;
   let h = img.height;
 
   for (let y = 0; y < h; y++) {
-    let f = (h - 1 - y) / h * frame_size / 2 | 0;
+    let f = (h - 1 - y) / h * frame_size / (fs_full ? 1 : 2) | 0;
     let re = frame.array[f * 2];
     let im = frame.array[f * 2 + 1];
 
     let rgb = rgb_fn(re, im);
     let i = (x + y * w) * 4;
 
-    img.data[i + 0] = 255 * rgb[0];
-    img.data[i + 1] = 255 * rgb[1];
-    img.data[i + 2] = 255 * rgb[2];
-    img.data[i + 3] = 255;
+    img.data[i + 0] += 255 * rgb[0];
+    img.data[i + 1] += 255 * rgb[1];
+    img.data[i + 2] += 255 * rgb[2];
+    img.data[i + 3] += 255;
   }
 }
 
+// Returns a Float32Tensor: num_frames x frame_size x 2.
 export function computeSpectrogram(signal, { num_frames, frame_size, min_frame, max_frame }) {
   let sig1 = new Float32Array(frame_size);
   let tmp1 = new Float32Array(frame_size);
@@ -237,10 +306,11 @@ export function computeSpectrogram(signal, { num_frames, frame_size, min_frame, 
   return frames;
 }
 
+// Pads the input signal with zeros for smoothness.
 export async function computePaddedSpectrogram(signal, { num_frames, frame_size }) {
   dcheck(frame_size % 2 == 0);
-  let padded = new Float32Array(signal.length + frame_size);
-  padded.set(signal, frame_size / 2);
+  let padded = new Float32Array(signal.length + frame_size * 2);
+  padded.set(signal, (padded.length - signal.length) / 2);
   let frame_step = signal.length / num_frames;
   let padded_frames = padded.length / frame_step | 0;
   let spectrogram = computeSpectrogram(padded, { num_frames: padded_frames, frame_size });
@@ -318,6 +388,7 @@ export function readAudioFrame(signal, frame, num_frames, frame_id, t_step = 1) 
   return frame;
 }
 
+// Returns null if no file was selected.
 export async function selectAudioFile(multiple = false) {
   let input = document.createElement('input');
   input.type = 'file';
@@ -328,6 +399,7 @@ export async function selectAudioFile(multiple = false) {
     input.onchange = () => resolve(multiple ? input.files : input.files[0]));
 }
 
+// Returns a Float32Array.
 export async function decodeAudioFile(file, sample_rate) {
   let encoded_data = await file.arrayBuffer();
   let audio_ctx = new AudioContext({ sampleRate: sample_rate });
@@ -566,4 +638,11 @@ async function computeSpectrogramAsync(worker_id, signal, config) {
   let req = { call: 'spectrogram', args: [signal, config] };
   let { dims, data } = await worker.sendRequest(req, [signal.buffer]);
   return new Float32Tensor(dims, data);
+}
+
+export function shiftCanvasData(canvas, { dx = 0, dy = 0 }) {
+  let ctx = canvas.getContext('2d');
+  let img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  ctx.putImageData(img, -dx, -dy);
+  ctx.putImageData(img, +dx, +dy);
 }
