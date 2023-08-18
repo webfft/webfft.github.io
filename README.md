@@ -1,5 +1,5 @@
-[https://github.com/webfft/webfft.github.io](https://github.com/webfft/webfft.github.io)
+Demo: [https://webfft.net](https://webfft.net)
 
-- [DFT](/dft)
-- [Ylm](/ylm)
-- [ACF](/acf)
+- [DFT](/dft) - the traditional spectrogram tool.
+- [ACF](/acf) - the auto-correlation function applied to sounds.
+- [Rad](/rad) - the Radon transform applied to sounds.
