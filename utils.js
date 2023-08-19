@@ -441,6 +441,92 @@ export async function recordAudio(sample_rate = 48000, max_duration = 1.0) {
   }
 }
 
+export function createDefaultWavelet(n, reps = 25) {
+  let w = new Float32Array(n);
+  for (let i = 0; i < n; i++)
+    w[i] = Math.cos(i / n * 2 * Math.PI * reps) * hann(i / n);
+  return w;
+}
+
+function convolveReSignal(sig_fft, wav, res) {
+  let n = sig_fft.length / 2;
+  dcheck(wav.length == n);
+  dcheck(res.length == n);
+  let wav_fft = forwardFFT(wav).array;
+  let res_fft = FFT.dot(sig_fft, wav_fft);
+  FFT.re(FFT.inverse(res_fft), res);
+}
+
+function sampleSignal(src, res) {
+  for (let j = 0; j < res.length; j++) {
+    let t = (j + 0.5) / res.length; // absolute 0..1 coordinate
+    let i = t * src.length - 0.5; // fractional index in src
+    let i1 = Math.max(0, Math.floor(i));
+    let i2 = Math.min(src.length - 1, Math.ceil(i));
+    res[j] = src[i1] * (i2 - i) + src[i2] * (i - i1);
+  }
+}
+
+function downsampleSignal(src, res, scale) {
+  dcheck(scale > 0 && scale <= 1);
+  dcheck(src.length == res.length);
+  res.fill(0);
+  // Equally-spaced sampling is, perhaps, the worst
+  // and the simplest downsampling algorithm known to man.
+  let n = src.length;
+  sampleSignal(src, res.subarray(0, Math.ceil(n * scale)));
+}
+
+function shiftSignal(src, res, shift) {
+  dcheck(src.length <= res.length);
+  let n = res.length;
+  for (let i = 0; i < src.length; i++)
+    res[(Math.round(i + shift) + n) % n] = src[i];
+}
+
+// Output: time_steps x num_scales x 2.
+export async function computeCWT(signal, wavelet,
+  { time_steps = 1024, num_scales = 1024, progress } = {}) {
+
+  wavelet = wavelet || createDefaultWavelet(signal.length);
+
+  // Zero padding and 2^N alignment for FFT.
+  let n = 2 ** (Math.ceil(Math.log2(signal.length)) + 1);
+  let output = new Float32Tensor([time_steps, num_scales, 2]);
+  let wav_scaled = new Float32Array(wavelet.length);
+  let wav_shifted = new Float32Array(n);
+  let convolved = new Float32Array(n);
+  let sig_padded = new Float32Array(n);
+  sig_padded.set(signal);
+  let signal_fft = forwardFFT(sig_padded).array;
+  let samples = new Float32Array(time_steps);
+  let t = Date.now(), dt = await progress?.(0);
+
+  // A faster method to compute CWT is to split the input signal
+  // into overlapping sub-signals, so the wavelet would always
+  // fit within at least one of the sub-signal.
+  for (let s = 0; s < num_scales; s++) {
+    let zoom = (s + 1) / num_scales;
+    downsampleSignal(wavelet, wav_scaled, zoom);
+    shiftSignal(wav_scaled, wav_shifted, -zoom * wav_scaled.length / 2);
+    convolveReSignal(signal_fft, wav_shifted, convolved);
+    sampleSignal(convolved.subarray(0, signal.length), samples);
+
+    // When wavelet is downscaled, it should be multiplied
+    // correspondingly: see a definition of the Morlet wavelet.
+    for (let t = 0; t < time_steps; t++)
+      output.array[(t * num_scales + s) * 2] = samples[t] / zoom;
+
+    if (dt > 0 && Date.now() - t > dt) {
+      t = Date.now();
+      dt = await progress((s + 1) / num_scales, output);
+      if (!dt) break;
+    }
+  }
+
+  return output;
+}
+
 export class AudioRecorder {
   constructor(stream, sample_rate) {
     this.stream = stream;
@@ -645,4 +731,58 @@ export function shiftCanvasData(canvas, { dx = 0, dy = 0 }) {
   let img = ctx.getImageData(0, 0, canvas.width, canvas.height);
   ctx.putImageData(img, -dx, -dy);
   ctx.putImageData(img, +dx, +dy);
+}
+
+// await showStatus("foobar", { "exit": () => ... })
+export async function showStatus(text, buttons) {
+  let str = Array.isArray(text) ? text.join(' ') : text + '';
+  str && console.info(str);
+  let status = initStatusBar();
+  status.style.display = str || buttons ? '' : 'none';
+  status.innerText = str;
+  if (buttons) {
+    for (let name in buttons) {
+      let handler = buttons[name];
+      let a = document.createElement('a');
+      a.innerText = name;
+      a.onclick = () => { a.onclick = null; handler(); };
+      a.style.textDecoration = 'underline';
+      a.style.cursor = 'pointer';
+      a.style.marginLeft = '1em';
+      status.append(a);
+    }
+  }
+  await sleep(15);
+}
+
+export function hideStatus() {
+  showStatus('');
+}
+
+function initStatusBar() {
+  let id = 'status_283992';
+  let status = $('#' + id);
+  if (status) return status;
+
+  status = document.createElement('div');
+  status.id = id;
+  status.style.background = '#448';
+  status.style.padding = '0.25em';
+  status.style.display = 'none';
+
+  let middle = document.createElement('div');
+  middle.style.zIndex = '432';
+  middle.style.position = 'fixed';
+  middle.style.width = '100%';
+  middle.style.top = '50%';
+  middle.style.textAlign = 'center';
+
+  middle.append(status);
+  document.body.append(middle);
+  return status;
+}
+
+export function setUncaughtErrorHandlers() {
+  window.onerror = (event, source, lineno, colno, error) => showStatus(error);
+  window.onunhandledrejection = (event) => showStatus(event.reason);
 }
