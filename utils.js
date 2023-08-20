@@ -1,6 +1,7 @@
 import { FFT } from 'https://soundshader.github.io/webfft.js';
 
 export const $ = (selector) => document.querySelector(selector);
+export const $$ = (selector) => document.querySelectorAll(selector);
 export const log = (...args) => console.log(args.join(' '));
 export const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 export const mix = (a, b, x) => a * (1 - x) + b * x;

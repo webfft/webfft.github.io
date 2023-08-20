@@ -1,7 +1,7 @@
 import * as utils from '../utils.js';
 
 const { PI, abs, min, max, sign, ceil, floor, log2, log10 } = Math;
-const { $, mix, clamp, dcheck } = utils;
+const { $, $$, mix, clamp, dcheck } = utils;
 
 let gui = new dat.GUI({ name: 'Config' });
 let canvas_fft = $('#spectrogram');
@@ -63,6 +63,7 @@ function init() {
 }
 
 function initDebugGUI() {
+  gui.close();
   gui.add(config, 'dbRange', 0.25, 5, 0.25);
   gui.add(config, 'sampleRate', 4000, maxSampleRate, 1000);
   gui.add(config, 'frameSize', 256, 8192, 256);
@@ -71,8 +72,14 @@ function initDebugGUI() {
   gui.add(config, 'numFreqs', 256, 2048, 256);
   gui.add(config, 'showPhase');
   config.confirm = processUpdatedConfig;
+  config.help = () => { };
   gui.add(config, 'confirm');
-  gui.close();
+  gui.add(config, 'help');
+  let lis = $$('body > .dg.ac .cr.function');
+  let li = [...lis].find(li => li.querySelector('.property-name')?.textContent == 'help');
+  li.querySelector('.c').remove();
+  let href = 'https://github.com/webfft/webfft.github.io/tree/master/dft#settings';
+  li.querySelector('.property-name').innerHTML = `<a style="color:inherit" href="${href}">help</a>`;
 }
 
 function schedule(callback, args = []) {
