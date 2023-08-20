@@ -326,7 +326,7 @@ async function compACF(signal, num_frames, frame_size, use_fc = true) {
 
   for (let t = 0; t < num_frames; t++) {
     let frame = new Float32Array(fs);
-    ut.readAudioFrame(signal, frame, num_frames, t, conf.tstep);
+    ut.readAudioFrame(signal, frame, { num_frames, frame_id: t, t_step: conf.tstep });
     computeFFT(frame, frame);
     fft_data.subarray(t * fs, (t + 1) * fs).set(frame);
   }

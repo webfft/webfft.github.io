@@ -18,15 +18,17 @@ let actions = [];
 let timer = 0;
 let config = {}, prev_config = {};
 let defaultSampleRate = 48000;
-config.mimeType = 'audio/webm;codecs=opus';
-config.sampleRate = defaultSampleRate;
-config.frameSize = 1024;
-config.numFrames = 1024;
-config.dbRange = 1.5; // log10(re^2+im^2)
+config.sampleRate = defaultSampleRate; // should match the audio sample rate
+config.frameSize = 1024; // FFT size
+config.frameWidth = 1024; // <= frameSize, usually it's 20-200 ms worth of samples
+config.numFrames = 1024; // canvas width
+config.numFreqs = 1024; // canvas height <= frameSize/2
+config.dbRange = 1.0; // log10(re^2+im^2)
 config.audioKbps = 128;
 config.timeMin = 0; // sec
 config.timeMax = 0; // sec
 config.showPhase = false;
+
 let minSampleRate = 3000;
 let maxSampleRate = 384000;
 let audio_file = null;
@@ -57,17 +59,19 @@ function init() {
   toggleGridMode();
   initMouseHandlers();
   initDebugGUI();
-  showStatus('', { 'Sample': openSample, 'Record': recordAudio2, 'Open': openFile });
+  showStatus('', { 'Sample': openSample, 'Record': recordAudioPCM, 'Open': openFile });
 }
 
 function initDebugGUI() {
-  let add = (title, ...args) => gui.add(config, ...args).name(title);
-  add('Hz', 'sampleRate', 4000, maxSampleRate, 1000);
-  add('freqs', 'frameSize', 256, 4096, 256);
-  add('frames', 'numFrames', 256, 4096, 256);
-  add('sens', 'dbRange', 0.25, 5, 0.25);
+  gui.add(config, 'dbRange', 0.25, 5, 0.25);
+  gui.add(config, 'sampleRate', 4000, maxSampleRate, 1000);
+  gui.add(config, 'frameSize', 256, 8192, 256);
+  gui.add(config, 'frameWidth', 256, 4096, 256);
+  gui.add(config, 'numFrames', 256, 4096, 256);
+  gui.add(config, 'numFreqs', 256, 2048, 256);
+  gui.add(config, 'showPhase');
   config.confirm = processUpdatedConfig;
-  add('Confirm', 'confirm');
+  gui.add(config, 'confirm');
   gui.close();
 }
 
@@ -116,6 +120,8 @@ function processUpdatedConfig() {
   if (config.sampleRate != prev_config.sampleRate)
     schedule(decodeAudioFile);
   else if (config.frameSize != prev_config.frameSize || config.numFrames != prev_config.numFrames)
+    schedule(computeSpectrogram);
+  else if (config.frameWidth != prev_config.frameWidth || config.numFreqs != prev_config.numFreqs)
     schedule(computeSpectrogram);
   else if (config.timeMin != prev_config.timeMin || config.timeMax != prev_config.timeMax)
     schedule(computeSpectrogram);
@@ -184,7 +190,7 @@ async function getMicStream() {
   });
 }
 
-async function recordAudio2() {
+async function recordAudioPCM() {
   mic_stream = await getMicStream();
 
   try {
@@ -202,12 +208,13 @@ async function recordAudio2() {
   }
 }
 
+// Deprecated in favor of recordAudioPCM.
 async function recordAudio() {
   mic_stream = await getMicStream();
 
   await showStatus('Initializing MediaRecorder');
   let recorder = new MediaRecorder(mic_stream, {
-    mimeType: config.mimeType,
+    mimeType: 'audio/webm;codecs=opus',
     audioBitsPerSecond: config.audioKbps * 1000 | 0,
   });
 
@@ -320,12 +327,13 @@ function zoomTimeline(zoom = 1.0) {
 async function computeSpectrogram() {
   let num_frames = config.numFrames;
   let frame_size = config.frameSize;
+  let frame_width = min(config.frameWidth, config.frameSize);
   let time_min = config.timeMin.toFixed(2);
   let time_max = config.timeMax.toFixed(2);
   let time_span = time_min + '..' + time_max;
   await showStatus(['Computing DFT:', time_span, 'sec @', num_frames, 'x', frame_size]);
   let audio_window = getAudioWindow();
-  spectrogram = await utils.computePaddedSpectrogram(audio_window, { num_frames, frame_size });
+  spectrogram = await utils.computePaddedSpectrogram(audio_window, { num_frames, frame_size, frame_width });
 
   if (config.showPhase) {
     for (let i = 0; i < spectrogram.array.length; i += 2)
@@ -346,8 +354,10 @@ async function computeSpectrogram() {
 }
 
 function drawSpectrogram() {
+  let num_freqs = config.numFreqs;
   canvas_fft.width = config.numFrames;
-  utils.drawSpectrogram(canvas_fft, spectrogram, { db_log, rgb_fn });
+  canvas_fft.height = config.numFreqs;
+  utils.drawSpectrogram(canvas_fft, spectrogram, { db_log, rgb_fn, num_freqs });
   resetCanvasTransform();
   selectArea(null);
   drawPointTag(0, 0);

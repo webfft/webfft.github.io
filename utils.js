@@ -9,6 +9,7 @@ export const clamp = (x, min = 0, max = 1) => Math.max(Math.min(x, max), min);
 export const hann = (x) => x > 0 && x < 1 ? Math.sin(Math.PI * x) ** 2 : 0;
 export const fract = (x) => x - Math.floor(x);
 export const reim2 = (re, im) => re * re + im * im;
+export const is_pow2 = (x) => (x & (x - 1)) == 0;
 export const dcheck = (x) => { if (x) return; debugger; throw new Error('dcheck failed'); }
 
 const is_spectrogram = (s) => s.rank == 3 && s.dimensions[2] == 2;
@@ -202,8 +203,8 @@ export function applyBandpassFilter(signal, filter_fn) {
 }
 
 export function drawSpectrogram(canvas, spectrogram, {
-  db_log = s => s, rgb_fn = s => [s * 9, s * 3, s], sqrabs_max = 0,
-  reim_fn = reim2, fs_full = false, clear = true } = {}) {
+  db_log = s => s, rgb_fn = s => [s * 10, s * 1, s * 0.1], sqrabs_max = 0,
+  reim_fn = reim2, fs_full = false, clear = true, num_freqs = 0 } = {}) {
 
   let h = canvas.height;
   let w = canvas.width;
@@ -217,7 +218,7 @@ export function drawSpectrogram(canvas, spectrogram, {
 
   for (let x = 0; x < w; x++) {
     let frame = spectrogram.subtensor(x / w * num_frames | 0);
-    drawSpectrogramFrame(img, frame, x, rgb_reim, fs_full);
+    drawSpectrogramFrame(img, frame, x, rgb_reim, fs_full, num_freqs);
   }
 
   ctx.putImageData(img, 0, 0);
@@ -266,13 +267,14 @@ function aggFrameData(data, fn, reduce, initial = 0) {
   return max;
 }
 
-function drawSpectrogramFrame(img, frame, x, rgb_fn, fs_full) {
+function drawSpectrogramFrame(img, frame, x, rgb_fn, fs_full, num_freqs) {
   let frame_size = frame.dimensions[0];
+  let freq_max = Math.min(num_freqs || frame_size, frame_size) / (fs_full ? 1 : 2);
   let w = img.width;
   let h = img.height;
 
   for (let y = 0; y < h; y++) {
-    let f = (h - 1 - y) / h * frame_size / (fs_full ? 1 : 2) | 0;
+    let f = (h - 1 - y) / h * freq_max | 0;
     let re = frame.array[f * 2];
     let im = frame.array[f * 2 + 1];
 
@@ -287,7 +289,10 @@ function drawSpectrogramFrame(img, frame, x, rgb_fn, fs_full) {
 }
 
 // Returns a Float32Tensor: num_frames x frame_size x 2.
-export function computeSpectrogram(signal, { num_frames, frame_size, min_frame, max_frame }) {
+export function computeSpectrogram(signal, { num_frames, frame_size, frame_width, min_frame, max_frame }) {
+  dcheck(frame_width <= frame_size);
+  dcheck(is_pow2(frame_size));
+
   let sig1 = new Float32Array(frame_size);
   let tmp1 = new Float32Array(frame_size);
   let tmp2 = new Float32Array(frame_size);
@@ -299,7 +304,7 @@ export function computeSpectrogram(signal, { num_frames, frame_size, min_frame, 
 
   for (let t = min_frame; t <= max_frame; t++) {
     let res1 = frames.subtensor(t - min_frame).array;
-    readAudioFrame(signal, sig1, num_frames, t);
+    readAudioFrame(signal, sig1, { num_frames, frame_id: t, frame_width });
     forwardReFFT(sig1, res1, [tmp1, tmp2]);
   }
 
@@ -307,13 +312,12 @@ export function computeSpectrogram(signal, { num_frames, frame_size, min_frame, 
 }
 
 // Pads the input signal with zeros for smoothness.
-export async function computePaddedSpectrogram(signal, { num_frames, frame_size }) {
-  dcheck(frame_size % 2 == 0);
+export async function computePaddedSpectrogram(signal, { num_frames, frame_size, frame_width }) {
   let padded = new Float32Array(signal.length + frame_size * 2);
   padded.set(signal, (padded.length - signal.length) / 2);
   let frame_step = signal.length / num_frames;
   let padded_frames = padded.length / frame_step | 0;
-  let spectrogram = computeSpectrogram(padded, { num_frames: padded_frames, frame_size });
+  let spectrogram = computeSpectrogram(padded, { num_frames: padded_frames, frame_size, frame_width });
   let null_frames = (padded_frames - num_frames) / 2 | 0;
   return spectrogram.slice(null_frames, null_frames + num_frames);
 }
@@ -360,12 +364,10 @@ export function getAmpDensity(spectrogram, num_bins = 1024, amp2_map = Math.sqrt
 }
 
 // frame_size = fft_bins * 2
-export function readAudioFrame(signal, frame, num_frames, frame_id, t_step = 1) {
-  let len = frame.length;
-  let n = signal.length;
+export function readAudioFrame(signal, frame, { num_frames, frame_id, t_step = 1, frame_width = frame.length }) {
   let step = signal.length / num_frames;
   let base = frame_id * step | 0;
-  let len0 = Math.min(len, (n - 1 - base) / t_step | 0);
+  let len0 = Math.min(frame_width, (signal.length - 1 - base) / t_step | 0);
 
   // frame.set(
   //   signal.subarray(
@@ -378,11 +380,10 @@ export function readAudioFrame(signal, frame, num_frames, frame_id, t_step = 1) 
   frame.fill(0);
 
   for (let i = 0; i < len0; i++) {
-    let h = hann(i / len);
+    let h = hann(i / frame_width);
     let k = base + t_step * i | 0;
-    let s = k < n ? signal[k] : 0;
-    let j = (i + base) % len;
-    frame[j] = h * s;
+    let s = k < signal.length ? signal[k] : 0;
+    frame[i] = h * s;
   }
 
   return frame;
