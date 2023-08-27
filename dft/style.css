@@ -110,25 +110,6 @@ canvas#timespan {
   background: #000;
 }
 
-#middle {
-  z-index: 4;
-  position: fixed;
-  width: 100%;
-  top: 50%;
-  text-align: center;
-}
-
-#status {
-  background: #448;
-  padding: 0.25em;
-}
-
-#status a {
-  text-decoration: underline;
-  cursor: pointer;
-  margin-left: 1em;
-}
-
 #buttons {
   z-index: 5;
   position: fixed;

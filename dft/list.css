@@ -1,0 +1,46 @@
+body {
+  margin: 0;
+  font-family: monospace;
+  background: #222;
+}
+
+#cards {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-around;
+}
+
+.card {
+  padding: 5pt;
+  color: #0c0;
+  background: #000;
+  border-radius: 8px;
+  margin: 4px;
+}
+
+.card .title {
+  font-size: x-small;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 128px;
+}
+
+.card .img {
+  width: 128px;
+  height: 128px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.card canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.card img {
+  width: 64px;
+  height: 64px;
+}

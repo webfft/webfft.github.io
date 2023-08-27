@@ -49,7 +49,7 @@ function playCurrentSound() {
 
 async function loadSounds() {
   $('#sounds').innerHTML = '';
-  sound_files = await ut.selectAudioFile(true);
+  sound_files = await ut.selectAudioFile({ multiple: true });
   log('Selected files:', sound_files.length);
   await renderSoundFilesAsGrid();
   if (sound_files.length == 1)
@@ -65,7 +65,10 @@ async function showVowels() {
 
 async function recordMic() {
   log('Recording audio');
-  let blob = await ut.recordAudio(conf.sample_rate, conf.max_duration);
+  let blob = await ut.recordAudio({
+    sample_rate: conf.sample_rate,
+    max_duration: conf.max_duration,
+  });
   blob.name = 'mic' + conf.sample_rate + 'hz';
   log('Recorder audio:', blob);
   sound_files.push(blob);

@@ -38,7 +38,7 @@ function initDebugGUI() {
 }
 
 async function openFileAndDrawRT() {
-  audio_files = await utils.selectAudioFile(true);
+  audio_files = await utils.selectAudioFile({multiple:true});
   await updateCWT();
 }
 

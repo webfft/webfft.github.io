@@ -1,8 +1,10 @@
 import * as utils from '../utils.js';
+import * as db from './dbutils.js';
 
 const { PI, abs, min, max, sign, ceil, floor, log2, log10 } = Math;
-const { $, $$, mix, clamp, dcheck } = utils;
+const { $, $$, mix, clamp, dcheck, showStatus } = utils;
 
+let url_sp = new URLSearchParams(location.search);
 let gui = new dat.GUI({ name: 'Config' });
 let canvas_fft = $('#spectrogram');
 let div_mover = $('#mover');
@@ -59,7 +61,11 @@ function init() {
   toggleGridMode();
   initMouseHandlers();
   initDebugGUI();
-  showStatus('', { 'Sample': openSample, 'Record': recordAudioPCM, 'Open': openFile });
+  let file_url = url_sp.get('a');
+  if (file_url)
+    openSample(file_url);
+  else
+    showStatus('', { 'Samples': 'list.html', 'Record': recordAudioPCM, 'Open': openFile });
 }
 
 function initDebugGUI() {
@@ -99,23 +105,6 @@ async function perform() {
   let dt = (Date.now() - ts) / 1000;
   if (dt > 0.1) console.debug(callback.name, 'time:', dt.toFixed(1), 'sec');
   timer = setTimeout(perform, 0);
-}
-
-function showStatus(text, buttons) {
-  let str = Array.isArray(text) ? text.join(' ') : text + '';
-  str && console.info(str);
-  $('#status').style.display = str || buttons ? '' : 'none';
-  $('#status').innerText = str;
-  if (buttons) {
-    for (let name in buttons) {
-      let handler = buttons[name];
-      let a = document.createElement('a');
-      a.innerText = name;
-      a.onclick = () => { a.onclick = null; handler(); };
-      $('#status').append(a);
-    }
-  }
-  return utils.sleep(15);
 }
 
 function processUpdatedConfig() {
@@ -159,10 +148,9 @@ async function openFile() {
   await decodeAudioFile();
 }
 
-async function openSample() {
+async function openSample(file_url = 'ogg/lapwing.mp3') {
   await showStatus('Loading sample audio');
-  let res = await fetch('lapwing.mp3');
-  let file = await res.blob();
+  let file = await db.fetchAudioFile(file_url);
   audio_file = file;
   config.timeMin = 0;
   config.timeMax = 0;

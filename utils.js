@@ -13,6 +13,19 @@ export const reim2 = (re, im) => re * re + im * im;
 export const is_pow2 = (x) => (x & (x - 1)) == 0;
 export const dcheck = (x) => { if (x) return; debugger; throw new Error('dcheck failed'); }
 
+export function $$$(tag_name, attrs = {}, content = []) {
+  let el = document.createElement(tag_name);
+  for (let name in attrs)
+    el.setAttribute(name, attrs[name]);
+  if (typeof content == 'string')
+    el.textContent = content;
+  else if (Array.isArray(content))
+    el.append(...content);
+  else
+    throw new Error('Invalid element content passed to $$$');
+  return el;
+}
+
 const is_spectrogram = (s) => s.rank == 3 && s.dimensions[2] == 2;
 
 export class Float32Tensor {
@@ -204,7 +217,7 @@ export function applyBandpassFilter(signal, filter_fn) {
 }
 
 export function drawSpectrogram(canvas, spectrogram, {
-  db_log = s => s, rgb_fn = s => [s * 10, s * 1, s * 0.1], sqrabs_max = 0,
+  db_log = s => s, rgb_fn = s => [s * 9, s * 3, s * 1], sqrabs_max = 0,
   reim_fn = reim2, fs_full = false, clear = true, num_freqs = 0 } = {}) {
 
   let h = canvas.height;
@@ -223,6 +236,28 @@ export function drawSpectrogram(canvas, spectrogram, {
   }
 
   ctx.putImageData(img, 0, 0);
+}
+
+export async function drawSpectrogramFromFile(canvas, file_blob, config = {}) {
+  config.colors = config.colors || 'flame';
+  config.sample_rate = config.sample_rate || 48000;
+  config.num_frames = config.num_frames || 1024;
+  config.num_freqs = config.num_freqs || 1024;
+  config.frame_size = config.frame_size || config.num_freqs * 2;
+  config.frame_width = config.frame_width || Math.round(config.sample_rate * 0.020);
+  config.frame_width = Math.min(config.frame_width, config.frame_size);
+  config.rgb_fn = config.rgb_fn || {
+    'flame': s => [s * 10, s * 1, s * 0.1],
+    'black-white': s => [1 - 3 * s, 1 - 3 * s, 1 - 3 * s],
+  }[config.colors];
+
+  canvas = canvas || $$$('canvas',
+    { width: config.num_frames, height: config.num_freqs });
+
+  let sig = await decodeAudioFile(file_blob, config.sample_rate);
+  let sg = await computePaddedSpectrogram(sig, config);
+  await drawSpectrogram(canvas, sg, config);
+  return canvas;
 }
 
 export function getMaskedSpectrogram(spectrogram1, mask_fn) {
@@ -391,7 +426,7 @@ export function readAudioFrame(signal, frame, { num_frames, frame_id, t_step = 1
 }
 
 // Returns null if no file was selected.
-export async function selectAudioFile(multiple = false) {
+export async function selectAudioFile({ multiple = false } = {}) {
   let input = document.createElement('input');
   input.type = 'file';
   input.accept = 'audio/*';
@@ -402,7 +437,7 @@ export async function selectAudioFile(multiple = false) {
 }
 
 // Returns a Float32Array.
-export async function decodeAudioFile(file, sample_rate) {
+export async function decodeAudioFile(file, sample_rate = 48000) {
   let encoded_data = await file.arrayBuffer();
   let audio_ctx = new AudioContext({ sampleRate: sample_rate });
   try {
@@ -429,12 +464,20 @@ export async function playSound(sound_data, sample_rate) {
   }
 }
 
-export async function recordAudio(sample_rate = 48000, max_duration = 1.0) {
+// Returns an audio/wav Blob.
+export async function recordAudio({ sample_rate = 48000, max_duration = 1.0 } = {}) {
   let stream = await navigator.mediaDevices.getUserMedia({ audio: true, sampleRate: sample_rate });
   try {
     let recorder = new AudioRecorder(stream, sample_rate);
     await recorder.start();
-    await sleep(max_duration * 1000);
+
+    if (max_duration > 0)
+      await sleep(max_duration * 1000);
+    else if (max_duration instanceof Promise)
+      await max_duration;
+    else
+      dcheck('Invalid max_duration: ' + max_duration);
+
     let blob = await recorder.fetch();
     await recorder.stop();
     return blob;
@@ -747,10 +790,16 @@ export async function showStatus(text, buttons) {
       let handler = buttons[name];
       let a = document.createElement('a');
       a.innerText = name;
-      a.onclick = () => { a.onclick = null; handler(); };
+      if (typeof handler == 'function')
+        a.onclick = () => { a.onclick = null; handler(); };
+      else if (typeof handler == 'string')
+        a.href = handler;
+      else
+        throw new Error('Invalid button handler for ' + name);
       a.style.textDecoration = 'underline';
       a.style.cursor = 'pointer';
       a.style.marginLeft = '1em';
+      a.style.color = 'inherit';
       status.append(a);
     }
   }
@@ -769,6 +818,7 @@ function initStatusBar() {
   status = document.createElement('div');
   status.id = id;
   status.style.background = '#448';
+  status.style.color = '#fff';
   status.style.padding = '0.25em';
   status.style.display = 'none';
 
@@ -787,4 +837,123 @@ function initStatusBar() {
 export function setUncaughtErrorHandlers() {
   window.onerror = (event, source, lineno, colno, error) => showStatus(error);
   window.onunhandledrejection = (event) => showStatus(event.reason);
+}
+
+// An indexedDB wrapper:
+//
+//    db = DB.open("foo");
+//    tab = db.openTable("bar");
+//    await tab.set("key", "value");
+//    val = await tab.get("key");
+//
+//    tab = DB.open("foo/bar"); // short form
+//
+export class DB {
+  static open(name) {
+    if (name.indexOf('/') < 0)
+      return new DB(name);
+    let [db_name, tab_name, ...etc] = name.split('/');
+    dcheck(etc.length == 0);
+    return DB.open(db_name).openTable(tab_name);
+  }
+
+  static get(key_path) {
+    let [db_name, tab_name, key_name, ...etc] = key_path.split('/');
+    dcheck(etc.length == 0);
+    return DB.open(db_name).openTable(tab_name).get(key_name);
+  }
+
+  static set(key_path, val) {
+    let [db_name, tab_name, key_name, ...etc] = key_path.split('/');
+    dcheck(etc.length == 0);
+    return DB.open(db_name).openTable(tab_name).set(key_name, val);
+  }
+
+  constructor(name) {
+    dcheck(name.indexOf('/') < 0);
+    this.name = name;
+    this.version = 1;
+    this.tnames = new Set();
+  }
+  openTable(name) {
+    if (this.tnames.has(name))
+      throw new Error(`Table ${this.name}.${name} is alredy opened.`);
+    let t = new IndexedDBTable(name, this);
+    this.tnames.add(name);
+    return t;
+  }
+  _init() {
+    if (this.ready)
+      return this.ready;
+    let time = Date.now();
+    this.ready = new Promise((resolve, reject) => {
+      let req = indexedDB.open(this.name, this.version);
+      req.onupgradeneeded = (e) => {
+        log(this.name + ':upgradeneeded');
+        let db = e.target.result;
+        for (let tname of this.tnames) {
+          log('Opening a table:', tname);
+          db.createObjectStore(tname);
+        }
+      };
+      req.onsuccess = (e) => {
+        // log(this.name + ':success', Date.now() - time, 'ms');
+        this.db = e.target.result;
+        resolve(this.db);
+      };
+      req.onerror = e => {
+        console.error(this.name + ':error', e);
+        reject(e);
+      };
+    });
+    return this.ready;
+  }
+}
+
+class IndexedDBTable {
+  constructor(name, db) {
+    dcheck(name.indexOf('/') < 0);
+    this.name = name;
+    this.db = db;
+  }
+  async get(key) {
+    let db = await this.db._init();
+    return new Promise((resolve, reject) => {
+      let t = db.transaction(this.name, 'readonly');
+      let s = t.objectStore(this.name);
+      let r = s.get(key);
+      r.onerror = () => reject(new Error(`${this.name}.get(${key}) failed: ${r.error}`));
+      r.onsuccess = () => resolve(r.result);
+    });
+  }
+  async set(key, value) {
+    let db = await this.db._init();
+    await new Promise((resolve, reject) => {
+      let t = db.transaction(this.name, 'readwrite');
+      let s = t.objectStore(this.name);
+      let r = s.put(value, key);
+      r.onerror = () => reject(new Error(`${this.name}.set(${key}) failed: ${r.error}`));
+      r.onsuccess = () => resolve();
+    });
+  }
+  async remove(key) {
+    let db = await this.db._init();
+    await new Promise((resolve, reject) => {
+      let t = db.transaction(this.name, 'readwrite');
+      let s = t.objectStore(this.name);
+      let r = s.delete(key);
+      r.onerror = () => reject(new Error(`${this.name}.remove(${key}) failed: ${r.error}`));
+      r.onsuccess = () => resolve();
+    });
+  }
+  async keys() {
+    let db = await this.db._init();
+    return new Promise((resolve, reject) => {
+      let t = db.transaction(this.name, 'readonly');
+      let s = t.objectStore(this.name);
+      let r = s.getAllKeys();
+      r.onerror = () => reject(new Error(`${this.name}.keys() failed: ${r.error}`));
+      r.onsuccess = () => resolve(r.result);
+    });
+  }
 }
