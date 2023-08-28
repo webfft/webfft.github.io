@@ -7,7 +7,7 @@ body {
 #cards {
   display: flex;
   flex-wrap: wrap;
-  justify-content: space-around;
+  justify-content: space-between;
 }
 
 .card {
@@ -36,8 +36,8 @@ body {
 }
 
 .card canvas {
-  width: 100%;
-  height: 100%;
+  width: 128px;
+  height: 128px;
 }
 
 .card img {

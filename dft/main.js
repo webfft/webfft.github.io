@@ -30,6 +30,7 @@ config.audioKbps = 128;
 config.timeMin = 0; // sec
 config.timeMax = 0; // sec
 config.showPhase = false;
+config.showDisk = false;
 
 let minSampleRate = 3000;
 let maxSampleRate = 384000;
@@ -41,8 +42,8 @@ let selected_area = null;
 let playing_sound = null;
 let mic_stream = null;
 let prev_audio_window = null;
-// let db_log = (s) => clamp(log10(s) / config.dbRange + 1); // 0.001..1 -> -3..0 -> 0..1
-let db_log = (a2) => a2 ** (0.5 / config.dbRange); // 0.001..1 -> 0.1..1
+// let x2_mul = (s) => clamp(log10(s) / config.dbRange + 1); // 0.001..1 -> -3..0 -> 0..1
+let x2_mul = (a2) => a2 ** (0.5 / config.dbRange); // 0.001..1 -> 0.1..1
 let rgb_fn = (db) => [db * 9.0, db * 3.0, db * 1.0];
 let pct100 = (x) => (x * 100).toFixed(2) + '%';
 
@@ -77,6 +78,7 @@ function initDebugGUI() {
   gui.add(config, 'numFrames', 256, 4096, 256);
   gui.add(config, 'numFreqs', 256, 2048, 256);
   gui.add(config, 'showPhase');
+  gui.add(config, 'showDisk');
   config.confirm = processUpdatedConfig;
   config.help = () => { };
   gui.add(config, 'confirm');
@@ -123,7 +125,7 @@ function processUpdatedConfig() {
     schedule(computeSpectrogram);
   else if (config.showPhase != prev_config.showPhase)
     schedule(computeSpectrogram);
-  else if (config.dbRange != prev_config.dbRange)
+  else if (config.dbRange != prev_config.dbRange || config.showDisk != prev_config.showDisk)
     schedule(drawSpectrogram);
 
   prev_config = JSON.parse(JSON.stringify(config));
@@ -352,7 +354,7 @@ function drawSpectrogram() {
   let num_freqs = config.numFreqs;
   canvas_fft.width = config.numFrames;
   canvas_fft.height = config.numFreqs;
-  utils.drawSpectrogram(canvas_fft, spectrogram, { db_log, rgb_fn, num_freqs });
+  utils.drawSpectrogram(canvas_fft, spectrogram, { x2_mul, rgb_fn, num_freqs, disk: config.showDisk });
   resetCanvasTransform();
   selectArea(null);
   drawPointTag(0, 0);
@@ -401,7 +403,7 @@ function drawAvgSpectrum() {
     for (let x = 0; x < cw; x++) {
       let f = (ch - 1 - y) / ch * avg_spectrum.length / 2 | 0;
       let a = Math.abs((x + 0.5) / cw * 2 - 1);
-      let a_max = db_log(avg_spectrum[f] / abs_max);
+      let a_max = x2_mul(avg_spectrum[f] / abs_max);
       if (a > a_max) continue;
       let [r, g, b] = rgb_fn(a_max);
       let i = (y * cw + x) * 4;

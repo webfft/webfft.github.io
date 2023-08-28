@@ -40,29 +40,33 @@ export class Float32Tensor {
     for (let i = n - 2; i >= 0; i--)
       ds[i] = ds[i + 1] * dim[i + 1];
 
-    this.array = array || new Float32Array(size);
+    this.data = array || new Float32Array(size);
+
     this.rank = dims.length;
-    this.dimensions = dims;
+    this.dims = dims;
     this.dimension_size = ds;
+
+    this.array = this.data; // don't use
+    this.dimensions = this.dims; //  don't use
   }
 
   slice(begin, end) {
-    dcheck(begin >= 0 && begin < end && end <= this.dimensions[0]);
+    dcheck(begin >= 0 && begin < end && end <= this.dims[0]);
     let size = this.dimension_size[0];
-    let dims = this.dimensions.slice(1);
-    let data = this.array.subarray(begin * size, end * size);
+    let dims = this.dims.slice(1);
+    let data = this.data.subarray(begin * size, end * size);
     return new Float32Tensor([end - begin, ...dims], data);
   }
 
   subtensor(index) {
     let t = this.slice(index, index + 1);
-    let d = t.dimensions;
+    let d = t.dims;
     dcheck(d[0] == 1);
-    return new Float32Tensor(d.slice(1), t.array);
+    return new Float32Tensor(d.slice(1), t.data);
   }
 
   clone() {
-    return new Float32Tensor(this.dimensions.slice(), this.array.slice(0));
+    return new Float32Tensor(this.dims.slice(), this.data.slice(0));
   }
 }
 
@@ -217,28 +221,59 @@ export function applyBandpassFilter(signal, filter_fn) {
 }
 
 export function drawSpectrogram(canvas, spectrogram, {
-  db_log = s => s, rgb_fn = s => [s * 9, s * 3, s * 1], sqrabs_max = 0,
-  reim_fn = reim2, fs_full = false, clear = true, num_freqs = 0 } = {}) {
+  x2_mul = s => s, rgb_fn = s => [s * 9, s * 3, s * 1], sqrabs_max = 0,
+  reim_fn = reim2, disk = false, fs_full = false, clear = true, num_freqs = 0 } = {}) {
 
   let h = canvas.height;
   let w = canvas.width;
   let ctx = canvas.getContext('2d');
   let img = ctx.getImageData(0, 0, w, h);
   sqrabs_max = sqrabs_max || getSpectrogramMax(spectrogram, reim_fn);
-  let rgb_reim = (re, im) => rgb_fn(db_log(reim_fn(re, im) / sqrabs_max));
-  let num_frames = spectrogram.dimensions[0];
+  let rgb_reim = (re, im) => rgb_fn(x2_mul(reim_fn(re, im) / sqrabs_max));
+  let [num_frames, frame_size] = spectrogram.dims;
 
   if (clear) img.data.fill(0);
 
-  for (let x = 0; x < w; x++) {
-    let frame = spectrogram.subtensor(x / w * num_frames | 0);
-    drawSpectrogramFrame(img, frame, x, rgb_reim, fs_full, num_freqs);
+  if (!disk) {
+    for (let x = 0; x < w; x++) {
+      let frame = spectrogram.subtensor(x / w * num_frames | 0);
+      drawSpectrogramFrame(img, frame, x, rgb_reim, fs_full, num_freqs);
+    }
+  } else {
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let dx = (x - 0.5) / w * 2 - 1;
+        let dy = (y - 0.5) / h * 2 - 1;
+        let [r, a] = xy2ra(dy, dx);
+        if (r >= 1.0) continue;
+        let t = Math.abs((a / Math.PI + 2.0) % 1.0) * num_frames;
+        let f = (Math.sign(a) * r * 0.5 * num_freqs + frame_size) % frame_size;
+        dcheck(t >= 0 && t < num_frames);
+        dcheck(f >= 0 && f < frame_size);
+        let tf = Math.round(t) * frame_size + Math.round(f);
+        let re = spectrogram.data[tf * 2 + 0];
+        let im = spectrogram.data[tf * 2 + 1];
+        addFreqRGB(img, x, y, rgb_reim(re, im));
+      }
+    }
   }
 
   ctx.putImageData(img, 0, 0);
 }
 
+// (1, 0) -> (1, 0)
+// (-1, +0) -> (1, +PI)
+// (-1, -0) -> (1, -PI)
+function xy2ra(x, y) {
+  let r = Math.sqrt(x * x + y * y);
+  let a = Math.atan2(y, x); // -PI..PI
+  return [r, a]
+}
+
 export async function drawSpectrogramFromFile(canvas, file_blob, config = {}) {
+  if (config.num_freqs < 1.0)
+    dcheck(config.frame_size > 0);
+
   config.colors = config.colors || 'flame';
   config.sample_rate = config.sample_rate || 48000;
   config.num_frames = config.num_frames || 1024;
@@ -247,15 +282,19 @@ export async function drawSpectrogramFromFile(canvas, file_blob, config = {}) {
   config.frame_width = config.frame_width || Math.round(config.sample_rate * 0.020);
   config.frame_width = Math.min(config.frame_width, config.frame_size);
   config.rgb_fn = config.rgb_fn || {
-    'flame': s => [s * 10, s * 1, s * 0.1],
+    'flame': s => [s * 4, s * 2, s * 1],
     'black-white': s => [1 - 3 * s, 1 - 3 * s, 1 - 3 * s],
   }[config.colors];
 
-  canvas = canvas || $$$('canvas',
-    { width: config.num_frames, height: config.num_freqs });
-
   let sig = await decodeAudioFile(file_blob, config.sample_rate);
   let sg = await computePaddedSpectrogram(sig, config);
+
+  if (config.num_freqs < 1.0) {
+    let num_freqs = computeSpectrumPercentile(sg, config.num_freqs);
+    console.log('spectrum pctile:', config.num_freqs, num_freqs, '/', config.frame_size / 2);
+    config = { ...config, num_freqs };
+  }
+
   await drawSpectrogram(canvas, sg, config);
   return canvas;
 }
@@ -313,15 +352,18 @@ function drawSpectrogramFrame(img, frame, x, rgb_fn, fs_full, num_freqs) {
     let f = (h - 1 - y) / h * freq_max | 0;
     let re = frame.array[f * 2];
     let im = frame.array[f * 2 + 1];
-
     let rgb = rgb_fn(re, im);
-    let i = (x + y * w) * 4;
-
-    img.data[i + 0] += 255 * rgb[0];
-    img.data[i + 1] += 255 * rgb[1];
-    img.data[i + 2] += 255 * rgb[2];
-    img.data[i + 3] += 255;
+    addFreqRGB(img, x, y, rgb);
   }
+}
+
+function addFreqRGB(img, x, y, rgb) {
+  let i = (x + y * img.width) * 4;
+
+  img.data[i + 0] += 255 * rgb[0];
+  img.data[i + 1] += 255 * rgb[1];
+  img.data[i + 2] += 255 * rgb[2];
+  img.data[i + 3] += 255;
 }
 
 // Returns a Float32Tensor: num_frames x frame_size x 2.
@@ -371,6 +413,24 @@ export function getAvgSpectrum(spectrogram) {
 
 
   return spectrum;
+}
+
+function computeSpectrumPercentile(spectrogram, percentile) {
+  dcheck(is_spectrogram(spectrogram));
+  dcheck(percentile >= 0.0 && percentile <= 1.0);
+  let spectrum = getAvgSpectrum(spectrogram);
+  let n = spectrum.length;
+  let sum = spectrum.reduce((sum, x2) => sum + x2, 0.0);
+  let psum = spectrum[0];
+
+  for (let i = 1; i < n / 2; i++) {
+    if (psum >= sum * percentile)
+      return i;
+    psum += spectrum[i];
+    psum += spectrum[n - i];
+  }
+
+  return n / 2;
 }
 
 export function getVolumeTimeline(spectrogram) {

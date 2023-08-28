@@ -47,7 +47,7 @@ async function redrawRT() {
   is_drawing = true;
 
   let draw_sg = (sg) => utils.drawSpectrogram(canvas, sg,
-    { fs_full: true, db_log: s => s ** (1 / conf.brightness) });
+    { fs_full: true, x2_mul: s => s ** (1 / conf.brightness) });
 
   try {
     log('decoding audio file:', audio_file.name);

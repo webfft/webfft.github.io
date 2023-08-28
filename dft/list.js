@@ -42,8 +42,9 @@ async function showAudioCard(file_url) {
   try {
     let blob = await db.fetchAudioFile(file_url);
     log('Drawing spectrogram:', blob.name, blob.size, blob.type);
-    let canvas = await ut.drawSpectrogramFromFile(null, blob,
-      { num_frames: 128, num_freqs: 128, frame_size: 1024, colors: 'flame' });
+    let canvas = $$$('canvas', { width: 128, height: 128 })
+    await ut.drawSpectrogramFromFile(canvas, blob,
+      { num_frames: 256, num_freqs: 0.99, frame_width: 1024, frame_size: 2048, x2_mul: s => 1.5 * s ** 0.5, disk: true });
     let size_kb = (blob.size / 1024).toFixed(1) + ' KB';
     card_title.textContent = size_kb + ' ' + file_name;
     card_img.append($$$('a', { href: '/dft?a=' + file_url }, [canvas]));
