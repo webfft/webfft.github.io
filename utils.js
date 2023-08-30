@@ -8,6 +8,7 @@ export const mix = (a, b, x) => a * (1 - x) + b * x;
 export const step = (min, x) => x < min ? 0 : 1;
 export const clamp = (x, min = 0, max = 1) => Math.max(Math.min(x, max), min);
 export const hann = (x) => x > 0 && x < 1 ? Math.sin(Math.PI * x) ** 2 : 0;
+export const hann_ab = (x, a, b) => hann((x - a) / (b - a));
 export const fract = (x) => x - Math.floor(x);
 export const reim2 = (re, im) => re * re + im * im;
 export const is_pow2 = (x) => (x & (x - 1)) == 0;
@@ -264,7 +265,7 @@ export function drawSpectrogram(canvas, spectrogram, {
 // (1, 0) -> (1, 0)
 // (-1, +0) -> (1, +PI)
 // (-1, -0) -> (1, -PI)
-function xy2ra(x, y) {
+export function xy2ra(x, y) {
   let r = Math.sqrt(x * x + y * y);
   let a = Math.atan2(y, x); // -PI..PI
   return [r, a]
@@ -290,7 +291,8 @@ export async function drawSpectrogramFromFile(canvas, file_blob, config = {}) {
   let sg = await computePaddedSpectrogram(sig, config);
 
   if (config.num_freqs < 1.0) {
-    let num_freqs = computeSpectrumPercentile(sg, config.num_freqs);
+    let { freq_max } = computeSpectrumPercentile(sg, config.num_freqs);
+    let num_freqs = freq_max;
     console.log('spectrum pctile:', config.num_freqs, num_freqs, '/', config.frame_size / 2);
     config = { ...config, num_freqs };
   }
@@ -368,7 +370,7 @@ function addFreqRGB(img, x, y, rgb) {
 
 // Returns a Float32Tensor: num_frames x frame_size x 2.
 export function computeSpectrogram(signal, { num_frames, frame_size, frame_width, min_frame, max_frame }) {
-  dcheck(frame_width <= frame_size);
+  if (frame_width) dcheck(frame_width <= frame_size);
   dcheck(is_pow2(frame_size));
 
   let sig1 = new Float32Array(frame_size);
@@ -415,22 +417,50 @@ export function getAvgSpectrum(spectrogram) {
   return spectrum;
 }
 
-function computeSpectrumPercentile(spectrogram, percentile) {
+// Finds the smallest sub-rectangle of the spectrogram that
+// contains at least |pctile| fraction of the total energy.
+export function computeSpectrumPercentile(spectrogram, freq_pctile, time_pctile = freq_pctile) {
   dcheck(is_spectrogram(spectrogram));
-  dcheck(percentile >= 0.0 && percentile <= 1.0);
-  let spectrum = getAvgSpectrum(spectrogram);
-  let n = spectrum.length;
-  let sum = spectrum.reduce((sum, x2) => sum + x2, 0.0);
-  let psum = spectrum[0];
+  dcheck(freq_pctile >= 0.0 && freq_pctile <= 1.0);
+  dcheck(time_pctile >= 0.0 && time_pctile <= 1.0);
 
-  for (let i = 1; i < n / 2; i++) {
-    if (psum >= sum * percentile)
-      return i;
-    psum += spectrum[i];
-    psum += spectrum[n - i];
+  let spectrum = getAvgSpectrum(spectrogram);
+  let timeline = getVolumeTimeline(spectrogram);
+  let sum_x2 = spectrum.reduce((sum, x2) => sum + x2, 0.0);
+
+  let n = spectrum.length;
+  let psum = sum_x2 - spectrum[n / 2];
+  let freq_max = n / 2 - 1;
+
+  while (freq_max > 0) {
+    let psum2 = psum - spectrum[freq_max] - spectrum[(n - freq_max) % n];
+    if (psum2 < sum_x2 * freq_pctile)
+      break;
+    psum = psum2;
+    freq_max--;
   }
 
-  return n / 2;
+  let m = timeline.length;
+  let vsum = sum_x2;
+  let time_min = 0, time_max = m - 1;
+
+  while (time_min < time_max) {
+    let diff = 0.0;
+    if (vsum - timeline[time_min] >= sum_x2 * time_pctile && time_min < time_max) {
+      diff += timeline[time_min];
+      time_min++;
+    }
+    if (vsum - timeline[time_max] >= sum_x2 * time_pctile && time_min < time_max) {
+      diff += timeline[time_max];
+      time_max--;
+    }
+    if (diff > 0)
+      vsum -= diff;
+    else
+      break;
+  }
+
+  return { freq_max, time_min, time_max };
 }
 
 export function getVolumeTimeline(spectrogram) {
@@ -546,11 +576,15 @@ export async function recordAudio({ sample_rate = 48000, max_duration = 1.0 } = 
   }
 }
 
-export function createDefaultWavelet(n, reps = 25) {
-  let w = new Float32Array(n);
-  for (let i = 0; i < n; i++)
-    w[i] = Math.cos(i / n * 2 * Math.PI * reps) * hann(i / n);
-  return w;
+// When wavelet is downscaled, it should be multiplied
+// correspondingly: see a definition of the Morlet wavelet.
+export function createDefaultWavelet(reps, len, pad = 0) {
+  // |i| < len/2, s = 1, 2, 3, ...
+  return (i, s) => {
+    let im = Math.sin(i * s / len * 2 * Math.PI * reps);
+    let win = s * hann_ab(i * s / (len + pad * 2), -0.5, 0.5);
+    return im * win;
+  };
 }
 
 function convolveReSignal(sig_fft, wav, res) {
@@ -590,16 +624,16 @@ function shiftSignal(src, res, shift) {
 }
 
 // Output: time_steps x num_scales x 2.
-export async function computeCWT(signal, wavelet,
-  { time_steps = 1024, num_scales = 1024, progress } = {}) {
+export async function computeCWT(signal,
+  { base_wavelet, time_steps = 1024, num_scales = 1024, progress } = {}) {
 
-  wavelet = wavelet || createDefaultWavelet(signal.length);
+  // The wavelet function at scale=1.
+  base_wavelet = base_wavelet || createDefaultWavelet(25, signal.length);
 
   // Zero padding and 2^N alignment for FFT.
   let n = 2 ** (Math.ceil(Math.log2(signal.length)) + 1);
   let output = new Float32Tensor([time_steps, num_scales, 2]);
-  let wav_scaled = new Float32Array(wavelet.length);
-  let wav_shifted = new Float32Array(n);
+  let wav_centered = new Float32Array(n);
   let convolved = new Float32Array(n);
   let sig_padded = new Float32Array(n);
   sig_padded.set(signal);
@@ -610,17 +644,15 @@ export async function computeCWT(signal, wavelet,
   // A faster method to compute CWT is to split the input signal
   // into overlapping sub-signals, so the wavelet would always
   // fit within at least one of the sub-signal.
-  for (let s = 0; s < num_scales; s++) {
-    let zoom = (s + 1) / num_scales;
-    downsampleSignal(wavelet, wav_scaled, zoom);
-    shiftSignal(wav_scaled, wav_shifted, -zoom * wav_scaled.length / 2);
-    convolveReSignal(signal_fft, wav_shifted, convolved);
+  for (let s = 1; s < num_scales; s++) {
+    for (let i = -n / 2; i < n / 2; i++)
+      wav_centered[(i + n) % n] = base_wavelet(i, s);
+
+    convolveReSignal(signal_fft, wav_centered, convolved);
     sampleSignal(convolved.subarray(0, signal.length), samples);
 
-    // When wavelet is downscaled, it should be multiplied
-    // correspondingly: see a definition of the Morlet wavelet.
     for (let t = 0; t < time_steps; t++)
-      output.array[(t * num_scales + s) * 2] = samples[t] / zoom;
+      output.array[(t * num_scales + s) * 2] = samples[t];
 
     if (dt > 0 && Date.now() - t > dt) {
       t = Date.now();
