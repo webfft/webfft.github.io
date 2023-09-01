@@ -8,7 +8,7 @@ let conf = {};
 conf.sampleRate = 12000;
 conf.frameSize = 1024;
 conf.numFrames = 1024;
-conf.numWaves = 50;
+conf.numWaves = 15;
 conf.brightness = 2;
 conf.disk = false;
 
@@ -66,21 +66,19 @@ async function updateCWT() {
 
     let sig0 = audio_signals[0];
 
+    canvas.width = conf.numFrames;
+    canvas.height = conf.frameSize;
+
     await showStatus('Computing FFT');
     let spectrogram = await utils.computePaddedSpectrogram(sig0, {
       num_frames: conf.numFrames,
       frame_size: conf.frameSize,
     });
 
-    let { freq_max, time_min, time_max } = await utils.computeSpectrumPercentile(spectrogram, 1.0, 1.0);
+    let { freq_max, time_min, time_max } = await utils.computeSpectrumPercentile(spectrogram, 0.99995, 1.0);
     console.log('99%-tile: freq=0..' + freq_max, 'time=' + time_min + '..' + time_max);
 
     await draw_sg(spectrogram, { num_freqs: freq_max, fs_full: false });
-
-    // This corresponds to 0.5*sample_rate/num_scales Hz.
-    let base_wavelet = utils.createDefaultWavelet(conf.numWaves,
-      conf.sampleRate * 2 * conf.frameSize / freq_max,
-      conf.sampleRate * 0.0);
 
     let signal = sig0.subarray(
       time_min / conf.numFrames * sig0.length | 0,
@@ -88,23 +86,33 @@ async function updateCWT() {
 
     await showStatus('Computing CWT: signal=' + signal.length);
     let scaleogram = await utils.computeCWT(signal, {
-      base_wavelet: base_wavelet,
+      base_wavelet: utils.createDefaultWavelet(conf.numWaves, 0.025),
       time_steps: conf.numFrames,
-      num_scales: conf.frameSize / 2,
-      async progress(pct, res_partial) {
-        if (pct > 0)
-          await draw_sg(res_partial);
+      num_freqs: conf.frameSize,
+      freq_max: freq_max / conf.frameSize * conf.sampleRate,
+      sample_rate: conf.sampleRate,
+
+      progress_fn: async (pct, res_partial) => {
+        if (pct > 0) {
+          if (conf.disk) {
+            let diskogram = createDiskSpectrogram(res_partial, conf.frameSize);
+            await draw_sg(diskogram);
+          } else {
+            await draw_sg(res_partial);
+          }
+        }
         await showStatus(['Computing CWT', (pct * 100).toFixed(0) + '%'], {
           'Cancel': () => is_drawing = false,
         });
         return is_drawing ? 1500 : 0; // ms
       }
     });
-    await draw_sg(scaleogram);
 
     if (conf.disk) {
       let diskogram = createDiskSpectrogram(scaleogram, conf.frameSize);
-      await draw_sg(diskogram, { clear: true });
+      await draw_sg(diskogram);
+    } else {
+      await draw_sg(scaleogram);
     }
   } finally {
     is_drawing = false;
@@ -118,20 +126,32 @@ function createDiskSpectrogram(spectrogram, diameter) {
   let [num_frames, frame_size] = spectrogram.dimensions;
   let disk = new utils.Float32Tensor([diameter, diameter, 2]);
 
+  let downsampled = spectrogram.clone();
+  downsampled.data.fill(0);
+  for (let f = 1; f < frame_size; f++) {
+    let src = new Float32Array(num_frames);
+    for (let t = 0; t < num_frames; t++)
+      src[t] = spectrogram.data[(t * frame_size + f) * 2];
+    let res = new Float32Array(Math.round(f / frame_size * num_frames));
+    utils.downsampleSignal(src, res);
+    for (let t = 0; t < res.length; t++)
+      downsampled.data[(t * frame_size + f) * 2] = res[t];
+  }
+
   for (let y = 0; y < diameter; y++) {
     for (let x = 0; x < diameter; x++) {
       let dx = (x - 0.5) / diameter - 0.5;
       let dy = (y - 0.5) / diameter - 0.5;
       let [r, a] = utils.xy2ra(dx, dy);
 
-      let t = Math.round(Math.abs(a / Math.PI) * (num_frames - 1));
+      let t = Math.round(Math.abs(a / Math.PI) * (num_frames - 1) * r / 0.75);
       let f = Math.round(r / 0.75 * (frame_size - 1));
       utils.dcheck(t >= 0 && t < num_frames);
       utils.dcheck(f >= 0 && f < frame_size);
-      if (a < 0) t = num_frames - 1 - t;
+      // if (a < 0) t = num_frames - 1 - t;
       let tf = t * frame_size + f;
-      let re = spectrogram.data[tf * 2 + 0];
-      let im = spectrogram.data[tf * 2 + 1];
+      let re = downsampled.data[tf * 2 + 0];
+      let im = downsampled.data[tf * 2 + 1];
 
       let yx = y * diameter + x;
       disk.data[yx * 2 + 0] = re;

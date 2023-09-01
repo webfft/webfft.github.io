@@ -578,12 +578,11 @@ export async function recordAudio({ sample_rate = 48000, max_duration = 1.0 } = 
 
 // When wavelet is downscaled, it should be multiplied
 // correspondingly: see a definition of the Morlet wavelet.
-export function createDefaultWavelet(reps, len, pad = 0) {
-  // |i| < len/2, s = 1, 2, 3, ...
-  return (i, s) => {
-    let im = Math.sin(i * s / len * 2 * Math.PI * reps);
-    let win = s * hann_ab(i * s / (len + pad * 2), -0.5, 0.5);
-    return im * win;
+export function createDefaultWavelet(num_reps, padding_sec) {
+  return (time_sec) => {
+    let im = Math.sin(time_sec * 2 * Math.PI);
+    let wf = hann_ab(time_sec / (num_reps + padding_sec), -0.5, 0.5);
+    return im * wf;
   };
 }
 
@@ -606,14 +605,23 @@ function sampleSignal(src, res) {
   }
 }
 
-function downsampleSignal(src, res, scale) {
-  dcheck(scale > 0 && scale <= 1);
-  dcheck(src.length == res.length);
-  res.fill(0);
-  // Equally-spaced sampling is, perhaps, the worst
-  // and the simplest downsampling algorithm known to man.
-  let n = src.length;
-  sampleSignal(src, res.subarray(0, Math.ceil(n * scale)));
+// Same as the convolution with a basic rectangular window function.
+export function downsampleSignal(src, res) {
+  dcheck(src.length >= res.length);
+  let n = src.length, m = res.length;
+
+  for (let j = 0; j < m; j++) {
+    let i_min = Math.ceil(j * n / m - 0.5);
+    let i_max = Math.floor((j + 1) * n / m - 0.5);
+    dcheck(i_min >= 0 && i_max < n);
+    dcheck(i_min <= i_max);
+
+    let sum = 0;
+    for (let i = i_min; i <= i_max; i++)
+      sum += src[i];
+
+    res[j] = sum * m / n;
+  }
 }
 
 function shiftSignal(src, res, shift) {
@@ -623,40 +631,53 @@ function shiftSignal(src, res, shift) {
     res[(Math.round(i + shift) + n) % n] = src[i];
 }
 
-// Output: time_steps x num_scales x 2.
-export async function computeCWT(signal,
-  { base_wavelet, time_steps = 1024, num_scales = 1024, progress } = {}) {
-
+// Output: Float32Tensor(time_steps x num_freqs x 2).
+export async function computeCWT(signal, {
+  sample_rate,
   // The wavelet function at scale=1.
-  base_wavelet = base_wavelet || createDefaultWavelet(25, signal.length);
+  base_wavelet = createDefaultWavelet(15, 0.025),
+  time_steps = 1024,
+  num_freqs = 1024,
+  freq_min = 0,
+  freq_max = sample_rate / 2,
+  progress_fn } = {}) {
+
+  dcheck(sample_rate > 0);
+  dcheck(time_steps > 0);
+  dcheck(num_freqs > 0);
+  dcheck(freq_min >= 0 && freq_max <= sample_rate / 2 && freq_min <= freq_max);
+  dcheck(base_wavelet);
 
   // Zero padding and 2^N alignment for FFT.
   let n = 2 ** (Math.ceil(Math.log2(signal.length)) + 1);
-  let output = new Float32Tensor([time_steps, num_scales, 2]);
+  let output = new Float32Tensor([time_steps, num_freqs, 2]);
   let wav_centered = new Float32Array(n);
   let convolved = new Float32Array(n);
   let sig_padded = new Float32Array(n);
   sig_padded.set(signal);
   let signal_fft = forwardFFT(sig_padded).array;
   let samples = new Float32Array(time_steps);
-  let t = Date.now(), dt = await progress?.(0);
+  let t = Date.now(), dt = await progress_fn?.(0);
 
-  // A faster method to compute CWT is to split the input signal
-  // into overlapping sub-signals, so the wavelet would always
-  // fit within at least one of the sub-signal.
-  for (let s = 1; s < num_scales; s++) {
+  for (let s = 0; s < num_freqs; s++) {
+    let freq_hz = mix(freq_min, freq_max, s / num_freqs);
     for (let i = -n / 2; i < n / 2; i++)
-      wav_centered[(i + n) % n] = base_wavelet(i, s);
+      wav_centered[(i + n) % n] = base_wavelet(i / sample_rate * freq_hz) * freq_hz;
 
     convolveReSignal(signal_fft, wav_centered, convolved);
-    sampleSignal(convolved.subarray(0, signal.length), samples);
+    for (let i = 0; i < n; i++)
+      convolved[i] = reim2(convolved[i], 0);
+
+    downsampleSignal(convolved.subarray(0, signal.length), samples);
+    for (let i = 0; i < time_steps; i++)
+      samples[i] = Math.sqrt(samples[i]);
 
     for (let t = 0; t < time_steps; t++)
-      output.array[(t * num_scales + s) * 2] = samples[t];
+      output.array[(t * num_freqs + s) * 2] = samples[t];
 
-    if (dt > 0 && Date.now() - t > dt) {
+    if (progress_fn && dt > 0 && Date.now() - t > dt) {
       t = Date.now();
-      dt = await progress((s + 1) / num_scales, output);
+      dt = await progress_fn((s + 1) / num_freqs, output);
       if (!dt) break;
     }
   }
