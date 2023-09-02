@@ -1,6 +1,6 @@
 import * as utils from '../utils.js';
 
-const { $, log, showStatus } = utils;
+const { $, log, dcheck, clamp, showStatus } = utils;
 
 let gui = new dat.GUI({ name: 'Config' });
 let canvas = $('canvas');
@@ -35,8 +35,9 @@ function initDebugGUI() {
   gui.add(conf, 'numWaves', 1, 100, 1);
   gui.add(conf, 'brightness', 0, 6, 0.1);
   gui.add(conf, 'disk');
-  conf.redraw = () => updateCWT();
-  gui.add(conf, 'redraw');
+  let add_button = (label, fn) => (conf[label] = () => fn()) && gui.add(conf, label);
+  add_button('redraw', updateCWT);
+  add_button('draw_hsl', drawHSL);
 }
 
 async function openFileAndDrawRT() {
@@ -86,7 +87,7 @@ async function updateCWT() {
 
     await showStatus('Computing CWT: signal=' + signal.length);
     let scaleogram = await utils.computeCWT(signal, {
-      base_wavelet: utils.createDefaultWavelet(conf.numWaves, 0.025),
+      base_wavelet: utils.createDefaultWavelet(conf.numWaves, 0.050),
       time_steps: conf.numFrames,
       num_freqs: conf.frameSize,
       freq_max: freq_max / conf.frameSize * conf.sampleRate,
@@ -160,4 +161,29 @@ function createDiskSpectrogram(spectrogram, diameter) {
   }
 
   return disk;
+}
+
+function drawHSL() {
+  utils.setPixels(canvas, (x, y, w, h) => {
+    let [rad, arg] = utils.xy2ra(x / w * 2 - 1, 1 - y / h * 2);
+    let [r, g, b] = utils.hsl2rgb((arg / Math.PI * 0.5 + 1.0) % 1, rad, 0.5);
+    return [r, g, b];
+  });
+
+  utils.drawCurve(canvas, 300, (t) => {
+    let r = clamp(4 * t), g = clamp(2 * t), b = clamp(1 * t);
+    r = clamp(r - clamp(t - 0.75));
+
+    let [h, s, l] = utils.rgb2hsl(r, g, b);
+    // console.log(t.toFixed(2), '->', [h, s, l].map(x => x.toFixed(2)).join(' '));
+    let [arg, rad] = [h, s];
+    utils.dcheck(rad <= 1.001);
+    let dx = rad * Math.cos(arg * 2 * Math.PI);
+    let dy = rad * Math.sin(arg * 2 * Math.PI);
+    let x = (+dx * 0.5 + 0.5) * canvas.width;
+    let y = (-dy * 0.5 + 0.5) * canvas.height;
+    return [x, y];
+  });
+
+  showStatus('');
 }

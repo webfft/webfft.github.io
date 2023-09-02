@@ -14,6 +14,8 @@ export const reim2 = (re, im) => re * re + im * im;
 export const is_pow2 = (x) => (x & (x - 1)) == 0;
 export const dcheck = (x) => { if (x) return; debugger; throw new Error('dcheck failed'); }
 
+let { min, max } = Math;
+
 export function $$$(tag_name, attrs = {}, content = []) {
   let el = document.createElement(tag_name);
   for (let name in attrs)
@@ -1089,4 +1091,86 @@ class IndexedDBTable {
       r.onsuccess = () => resolve(r.result);
     });
   }
+}
+
+export function setPixels(canvas, rgba_fn) {
+  let w = canvas.width;
+  let h = canvas.height;
+  let ctx = canvas.getContext('2d');
+  let img = ctx.getImageData(0, 0, w, h);
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let yx = (y * w + x) * 4;
+      let [r, g, b, a = 1] = rgba_fn(x, y, w, h);
+      img.data[yx + 0] = r * 255;
+      img.data[yx + 1] = g * 255;
+      img.data[yx + 2] = b * 255;
+      img.data[yx + 3] = a * 255;
+    }
+  }
+
+  ctx.putImageData(img, 0, 0);
+}
+
+export function drawCurve(canvas, steps, t2xy_fn) {
+  dcheck(steps >= 2);
+  let ctx = canvas.getContext('2d');
+  ctx.beginPath();
+
+  for (let i = 0; i < steps; i++) {
+    let t = i / (steps - 1);
+    let [x, y] = t2xy_fn(t);
+    i > 0 ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+
+  ctx.stroke();
+}
+
+export function hsl2rgb(h, s, l) {
+  if (!s) return [l, l, l];
+
+  let q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  let p = 2 * l - q;
+  let r = hue2rgb(p, q, h + 1 / 3);
+  let g = hue2rgb(p, q, h);
+  let b = hue2rgb(p, q, h - 1 / 3);
+
+  return [r, g, b];
+}
+
+function hue2rgb(p, q, t) {
+  if (t < 0) t += 1;
+  if (t > 1) t -= 1;
+  if (t < 1 / 6) return p + (q - p) * 6 * t;
+  if (t < 1 / 2) return q;
+  if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+  return p;
+}
+
+export function rgb2hsl(r, g, b) {
+  let vmax = max(r, g, b);
+  let vmin = min(r, g, b);
+  let c = vmax - vmin; // chroma
+  let h, l = (vmax + vmin) / 2;
+  let s = 0.5 * c / min(l, 1.0 - l);
+
+  if (!c) return [0, 0, l];
+
+  if (vmax == r) h = (g - b) / c + (g < b ? 6 : 0);
+  if (vmax == g) h = (b - r) / c + 2;
+  if (vmax == b) h = (r - g) / c + 4;
+
+  return [h / 6, s, l];
+}
+
+export function rgb2hcl(r, g, b) {
+  let [h, s, l] = rgb2hsl(r, g, b);
+  let c = s * min(l, 1.0 - l) * 2;
+  return [h, c, l];
+}
+
+export function hcl2rgb(h, c, l) {
+  let s = 0.5 * c / min(l, 1.0 - l);
+  return hsl2rgb(h, min(s, 1.0), l);
 }
