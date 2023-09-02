@@ -1,12 +1,13 @@
 import { FFT } from 'https://soundshader.github.io/webfft.js';
-import * as ut from '/utils.js';
+import * as ut from '../utils.js';
 
 let gui = new dat.GUI({ name: 'Settings' });
 let conf = {};
+
 conf.acf = true;
 conf.disk = true;
 conf.symm = 1;
-conf.nrep = 6;
+conf.nrep = 3;
 conf.tstep = 4;
 conf.delay = 0.0;
 conf.s2_sens = 0.005;
@@ -15,8 +16,9 @@ conf.abs_max = 0.08;
 conf.max_duration = 1.5;
 conf.frame_size = 2048;
 conf.sample_rate = 48000;
-conf.num_frames_xs = 256;
-conf.num_frames_xl = 1024;
+conf.num_frames_xs = 128;
+conf.num_frames_xl = 512;
+
 let sound_files = [];
 let waveform = null;
 let freq_colors = null;
@@ -34,7 +36,7 @@ let sleep = ut.sleep;
 async function main() {
   initDebugUI();
   initFreqColors();
-  loadWaveform();
+  await loadWaveform();
 
   if (waveform) {
     let canvas = createCanvas();
@@ -53,7 +55,7 @@ async function loadSounds() {
   log('Selected files:', sound_files.length);
   await renderSoundFilesAsGrid();
   if (sound_files.length == 1)
-    saveWaveform();
+    await saveWaveform();
 }
 
 async function showVowels() {
@@ -77,11 +79,12 @@ async function recordMic() {
 
 function initDebugUI() {
   // gui.close();
-  gui.add(conf, 'num_frames_xl', 1024, 2048, 1024);
-  gui.add(conf, 'frame_size', 1024, 8192, 1024);
+  gui.add(conf, 'num_frames_xl', 512, 2048, 512);
+  gui.add(conf, 'frame_size', 1024, 16384, 1024);
   gui.add(conf, 'sample_rate', 4000, 48000, 4000);
   gui.add(conf, 'tstep', 1, 16, 1);
   gui.add(conf, 'nrep', 1, 12, 1);
+  gui.add(conf, 'disk');
 
   let button = (name, callback) => {
     conf[name] = callback;
@@ -154,7 +157,7 @@ async function renderFullScreen(id) {
   canvas.className = 'top';
   canvas.onclick = () => canvas.remove();
   await renderSoundFile(id, canvas, conf.num_frames_xl);
-  saveWaveform();
+  await saveWaveform();
 }
 
 async function renderSoundFilesAsGrid() {
@@ -250,26 +253,24 @@ function trimSilence(waveform) {
   waveform = waveform.subarray(t_min, t_max + 1);
   // need some padding on both ends for smooth edges
   let pad = fs * conf.tstep | 0;
-  let tmp = new Float32Array(waveform.length + 2 * pad);
+  let tmp = new Float32Array(waveform.length + pad);
   tmp.set(waveform, pad);
   return tmp;
 }
 
-function loadWaveform() {
-  if (localStorage.audio) {
-    waveform = new Float32Array(
-      localStorage.audio.split(',')
-        .map(s => parseInt(s))
-        .map(i => i / 2 ** 15));
-    log('Loaded audio from local storage:', waveform.length);
-  }
+async function loadWaveform() {
+  let ts = Date.now();
+  waveform = await ut.DB.get('acf_data/samples/saved.pcm');
+  if (waveform) log('Loaded audio from local DB:', waveform.length, 'in', Date.now() - ts, 'ms');
 }
 
-function saveWaveform() {
-  if (waveform.length < 1e5) {
-    localStorage.audio = [...waveform]
-      .map(f => f * 2 ** 15 | 0).join(',');
-    log('Saved audio to local storage:', waveform.length);
+async function saveWaveform() {
+  try {
+    let ts = Date.now();
+    await ut.DB.set('acf_data/samples/saved.pcm', waveform);
+    log('Saved audio to local DB:', waveform.length, 'in', Date.now() - ts, 'ms');
+  } catch (err) {
+    console.error('Failed to save audio:', err);
   }
 }
 
@@ -326,10 +327,13 @@ async function compACF(signal, num_frames, frame_size, use_fc = true) {
   let acf_data = new Float32Array(4 * num_frames * fs);
   let res_data = new Float32Array(4 * num_frames * fs);
   let freq_colors = initFreqColors();
+  let signal_ds = new Float32Array(signal.length / conf.tstep | 0);
+
+  ut.downsampleSignal(signal, signal_ds);
 
   for (let t = 0; t < num_frames; t++) {
     let frame = new Float32Array(fs);
-    ut.readAudioFrame(signal, frame, { num_frames, frame_id: t, t_step: conf.tstep });
+    ut.readAudioFrame(signal_ds, frame, { num_frames, frame_id: t, t_step: 1 });
     computeFFT(frame, frame);
     fft_data.subarray(t * fs, (t + 1) * fs).set(frame);
   }
@@ -393,43 +397,51 @@ async function drawFrames(canvas, rgba_data, num_frames, frame_size, fn_rgba, r_
 
   // ctx.clearRect(0, 0, w, h);
 
-  let set_rgb = (x, y, r, g, b) => {
+  let add_rgb = (x, y, [r, g, b]) => {
     let i = (x + y * w) * 4;
-    img.data[i + 0] = 255 * Math.abs(r) / abs_max;
-    img.data[i + 1] = 255 * Math.abs(g) / abs_max;
-    img.data[i + 2] = 255 * Math.abs(b) / abs_max;
-    img.data[i + 3] = 255;
+    img.data[i + 0] += 255 * Math.abs(r) / abs_max;
+    img.data[i + 1] += 255 * Math.abs(g) / abs_max;
+    img.data[i + 2] += 255 * Math.abs(b) / abs_max;
+    img.data[i + 3] += 255;
+  };
+
+  let sample_rgb = (t, f) => {
+    if (t < 0 || t >= num_frames) return [0, 0, 0];
+    let f_width = !conf.disk ? 1.0 : frame_size / (2 * Math.PI * (t + 0.5) / num_frames * w / 2);
+    return [0, 1, 2].map(i => fn_rgba(rgba_data, i, t, f, f_width, num_frames, fs));
+  };
+
+  let xy2tf_disk = (x, y) => {
+    let [r, a] = xy2ra(x / w * 2 - 1, y / h * 2 - 1);
+    if (r >= r_max || r <= r_min)
+      return [0, 0];
+    let t = r * num_frames;
+    let f = ((a / Math.PI + 1) / 2 + 0.75) * fs;
+    f = f * conf.nrep; // vertical symmetry
+    return [t, f];
+  };
+
+  let xy2tf_rect = (x, y) => {
+    let r = Math.abs(y / h);
+    if (r >= r_max || r <= r_min)
+      return [0, 0];
+    let t = r * num_frames;
+    let f = (x / w + 0.5) * fs;
+    return [t, f];
+  };
+
+  let mix_rgb = (a, b, x) => {
+    return [0, 1, 2].map(i => ut.mix(a[i], b[i], x));
   };
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      let t, f, r, a;
-
-      if (!conf.disk) {
-        r = Math.abs(y / h);
-        if (r >= r_max || r <= r_min) continue;
-        t = r * num_frames | 0;
-        f = (x / w + 0.5) * fs;
-        t = clamp(t, 0, num_frames - 1);
-      } else {
-        [r, a] = xy2ra(x / w * 2 - 1, y / h * 2 - 1);
-        if (r >= r_max || r <= r_min) continue;
-        t = Math.min(num_frames - 1, r * num_frames | 0);
-        f = ((a / Math.PI + 1) / 2 + 0.75) * fs;
-        f = f * conf.nrep; // vertical symmetry
-      }
-
-      let f_width = conf.disk ? num_frames / (t + 1) : 0;
-
-      let cr = fn_rgba(rgba_data, 0, t, f, f_width, num_frames, fs);
-      let cg = fn_rgba(rgba_data, 1, t, f, f_width, num_frames, fs);
-      let cb = fn_rgba(rgba_data, 2, t, f, f_width, num_frames, fs);
-      dcheck(Math.abs(cr) + Math.abs(cg) + Math.abs(cb) >= 0);
-
-      set_rgb(x, y, cr, cg, cb);
-      // set_rgb(w - x - 1, y, r, g, b);
-      // set_rgb(x, h - y - 1, r, g, b);
-      // set_rgb(w - x - 1, h - y - 1, r, g, b);
+      let [t, f] = conf.disk ? xy2tf_disk(x, y) : xy2tf_rect(x, y);
+      if (!t && !f) continue;
+      let rgb1 = sample_rgb(Math.floor(t), f);
+      let rgb2 = sample_rgb(Math.ceil(t), f);
+      let rgb = mix_rgb(rgb1, rgb2, t - Math.floor(t));
+      add_rgb(x, y, rgb);
     }
 
     if (performance.now() > time + 250) {
@@ -447,35 +459,30 @@ async function drawFrames(canvas, rgba_data, num_frames, frame_size, fn_rgba, r_
 function getRgbaSmoothAvg(rgba_data, rgba_idx, t, f, f_width, num_frames, frame_size) {
   dcheck(rgba_idx >= 0 && rgba_idx <= 3);
   dcheck(t >= 0 && t < num_frames);
-  dcheck(f_width >= 0 && f_width <= frame_size);
+  dcheck(f_width > 0 && f_width <= frame_size);
   dcheck(rgba_data.length == num_frames * frame_size * 4);
 
   let fs = frame_size;
   let nf = num_frames;
   let base = rgba_idx * nf * fs + t * fs;
   let frame = rgba_data.subarray(base, base + fs);
+  let f_min = f - f_width / 2;
+  let f_max = f + f_width / 2;
+  let sum = 0;
 
-  return !f_width ?
-    frame[((f | 0) % fs + fs) % fs] :
-    getSmoothAvg(frame, f, f_width);
-}
-
-// f doesn't have to be an integer
-function getSmoothAvg(frame, f, f_width) {
-  let fs = frame.length;
-  let f_min = Math.floor(f - f_width);
-  let f_max = Math.ceil(f + f_width);
-  let sum = 0, w_sum = 0;
-
-  dcheck(f_width >= 1 && f_width <= fs);
-
-  for (let i = f_min; i <= f_max; i++) {
-    let w = hann(i, f - f_width, f + f_width);
-    sum += w * frame[(i % fs + fs) % fs];
-    w_sum += w;
+  for (let i = Math.floor(f_min); i <= Math.ceil(f_max); i++) {
+    let x = frame[(i + fs) % fs];
+    let w = intersect(i - 0.5, i + 0.5, f_min, f_max);
+    sum += w * Math.abs(x);
   }
 
-  return sum / w_sum;
+  return sum / f_width;
+}
+
+function intersect(l1, r1, l2, r2) {
+  let l = Math.max(l1, l2);
+  let r = Math.min(r1, r2);
+  return Math.max(0, r - l);
 }
 
 // output[i] = abs(FFT[i])^2
@@ -514,6 +521,54 @@ function computeACF(fft_data, output) {
   // let fft2 = FFT.expand(fft_data);
   // let fft = FFT.forward(fft2)
   FFT.abs(fft, output);
+}
+
+async function _renderWaveform(canvas, waveform, num_frames) {
+  let ts = Date.now();
+  let img = computeExpACF(waveform, canvas.width);
+  let sg = new ut.Float32Tensor([canvas.width, canvas.width, 2], FFT.expand(img));
+  ut.drawSpectrogram(canvas, sg, { fs_full: true, x2_mul: s => 2 * s ** 0.5 });
+  log('exp acf image completed in', Date.now() - ts, 'ms');
+}
+
+function computeExpACF(signal, img_size) {
+  let slices = new Array(img_size / 2); // slices[radius].length == 2*PI*radius
+
+  for (let r = 0; r < img_size / 2; r++) {
+    let len = Math.round(2 * Math.PI * (r + 0.5));
+    let t0 = Math.round((r + 0.5) / img_size * 2 * signal.length / 2);
+    let w0 = t0;
+
+    let sub_signal = signal.slice(t0 - w0, t0 + w0);
+    for (let i = 0; i < sub_signal.length; i++)
+      sub_signal[i] *= hann(i / sub_signal.length);
+
+    let autocf = ut.computeAutoCorrelation(sub_signal);
+    for (let i = 0; i < autocf.length; i++)
+      autocf[i] = Math.abs(autocf[i]);
+
+    let sampled = new Float32Array(len);
+    ut.downsampleSignal(autocf, sampled);
+
+    dcheck(r < slices.length);
+    slices[r] = sampled;
+  }
+
+  let image = new Float32Array(img_size ** 2);
+
+  for (let y = 0; y < img_size; y++) {
+    for (let x = 0; x < img_size; x++) {
+      let [r, a] = xy2ra(x / img_size * 2 - 1, y / img_size * 2 - 1);
+      let t = Math.round(r * slices.length);
+      if (t >= slices.length) continue;
+      let f = Math.round((a / Math.PI + 1) / 2 * slices[t].length);
+      f = f * 3;
+      f = f % slices[t].length;
+      image[y * img_size + x] = slices[t][f];
+    }
+  }
+
+  return image;
 }
 
 function dcheck(x) {

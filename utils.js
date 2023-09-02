@@ -685,6 +685,26 @@ export async function computeCWT(signal, {
   return output;
 }
 
+export function computeAutoCorrelation(signal) {
+  let n = signal.length;
+  let sig1 = new Float32Array(2 ** Math.ceil(Math.log2(2 * n)));
+  let sig2 = sig1.slice(0);
+
+  sig1.set(signal);
+  sig2.set(signal, 0);
+  sig2.set(signal, n);
+
+  let fft1 = forwardReFFT(sig1);
+  let fft2 = forwardReFFT(sig2);
+
+  FFT.conjugate(fft1);
+  FFT.dot(fft1, fft2, fft1);
+  FFT.inverse(fft1, fft2);
+  FFT.re(fft2, sig1);
+
+  return sig1.slice(0, n);
+}
+
 export class AudioRecorder {
   constructor(stream, sample_rate) {
     this.stream = stream;
