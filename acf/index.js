@@ -4,15 +4,14 @@ import * as ut from '../utils.js';
 let gui = new dat.GUI({ name: 'Settings' });
 let conf = {};
 
-conf.acf = true;
-conf.disk = true;
-conf.symm = 1;
-conf.nrep = 3;
+conf.colorize = true;
+conf.use_hann = true;
+conf.cosine = false;
+conf.nrep = 2;
 conf.tstep = 4;
-conf.delay = 0.0;
 conf.s2_sens = 0.005;
 conf.rot_phi = 0.0;
-conf.abs_max = 0.08;
+conf.brightness = 10.0;
 conf.max_duration = 1.5;
 conf.frame_size = 2048;
 conf.sample_rate = 48000;
@@ -83,8 +82,11 @@ function initDebugUI() {
   gui.add(conf, 'frame_size', 1024, 16384, 1024);
   gui.add(conf, 'sample_rate', 4000, 48000, 4000);
   gui.add(conf, 'tstep', 1, 16, 1);
-  gui.add(conf, 'nrep', 1, 12, 1);
-  gui.add(conf, 'disk');
+  gui.add(conf, 'nrep', 0, 12, 1);
+  gui.add(conf, 'brightness', 0, 25, 0.1);
+  gui.add(conf, 'use_hann');
+  gui.add(conf, 'colorize');
+  gui.add(conf, 'cosine');
 
   let button = (name, callback) => {
     conf[name] = callback;
@@ -103,20 +105,23 @@ function initFreqColors() {
     return freq_colors;
 
   freq_colors = new Float32Array(4 * fs);
+  freq_colors.fill(1.0);
 
-  for (let i = 0; i < fs; i++) {
-    let k = Math.min(i, fs - i) / fs; // 0..0.5
-    let f = ut.fract(k * sr / conf.tstep / 6000);
-    let r = hann(f, 0.0, 0.05) + hann(f, 0.3, 0.4) / 2 - hann(f, 0.0, 0.4) / 3;
-    let g = hann(f, 0.0, 0.25) + hann(f, 0.3, 0.6) / 2 - hann(f, 0.0, 0.6) / 3;
-    let b = hann(f, 0.0, 0.75) + hann(f, 0.2, 1.0) / 2 - hann(f, 0.0, 1.0) / 3;
-    let s = Math.abs(r + g + b) + 0.01;
-    dcheck(s != 0 || f == 0 || f == 1);
+  if (conf.colorize) {
+    for (let i = 0; i < fs; i++) {
+      let k = Math.min(i, fs - i) / fs; // 0..0.5
+      let f = ut.fract(k * 2 * sr / conf.tstep / 10000);
+      let r = hann(f, 0.0, 0.05) + hann(f, 0.3, 0.4) / 2 - hann(f, 0.0, 0.4) / 3;
+      let g = hann(f, 0.0, 0.25) + hann(f, 0.3, 0.6) / 2 - hann(f, 0.0, 0.6) / 3;
+      let b = hann(f, 0.0, 0.75) + hann(f, 0.2, 1.0) / 2 - hann(f, 0.0, 1.0) / 3;
+      // [r, g, b] = ut.hsl2rgb(f, 1.0, 0.5);
+      let s = Math.abs(r + g + b) + 0.01;
 
-    freq_colors[4 * i + 0] = r / s;
-    freq_colors[4 * i + 1] = g / s;
-    freq_colors[4 * i + 2] = b / s;
-    freq_colors[4 * i + 3] = 1.0;
+      freq_colors[4 * i + 0] = r / s;
+      freq_colors[4 * i + 1] = g / s;
+      freq_colors[4 * i + 2] = b / s;
+      freq_colors[4 * i + 3] = 1.0;
+    }
   }
 
   dcheck_array(freq_colors);
@@ -139,7 +144,7 @@ function createCanvas(id = 0, nf = conf.num_frames_xs) {
   let canvas = document.createElement('canvas');
   canvas.onclick = () => renderFullScreen(id);
 
-  if (conf.disk) {
+  if (conf.nrep) {
     canvas.width = nf * 2;
     canvas.height = nf * 2;
   } else {
@@ -276,8 +281,8 @@ async function saveWaveform() {
 
 async function drawACF(canvas, signal, num_frames) {
   let fs = conf.frame_size;
-  let nsymm = conf.symm;
-  let sub_signal = new Float32Array(signal.length / conf.symm | 0);
+  let nsymm = 1;
+  let sub_signal = new Float32Array(signal.length);
   let res_image = new Float32Array(4 * num_frames * fs * nsymm);
 
   for (let ks = 0; ks < nsymm; ks++) {
@@ -301,27 +306,11 @@ async function drawACF(canvas, signal, num_frames) {
     }
   }
 
-  await drawFrames(canvas, res_image, num_frames, fs * nsymm,
-    (data, c, t, f, fw) => getRgbaSmoothAvg(data, c, t, f, fw, num_frames, fs * nsymm));
-
-  /* let rad_frames = num_frames * 2 * Math.PI | 0;
-  let rad_fs = 32;
-  let rad_image = await compACF(signal, rad_frames, rad_fs, false);
-  let rad_rmin = 0.85;
-
-  await drawFrames(canvas, rad_image, rad_frames, rad_fs, (data, c, t, f) => {
-    // dcheck(f >= 0 && f <= rad_fs * conf.nrep + 1);
-    dcheck(t >= 0 && t < rad_frames);
-    let rad_t = (f / rad_fs / conf.nrep * rad_frames | 0) % rad_frames;
-    let rad_f = (t / rad_frames - rad_rmin) / (1.00 - rad_rmin);
-    let rad_frame = readACF(rad_image, c, rad_t, rad_frames, rad_fs);
-    let i = clamp(rad_f * rad_frame.length | 0, 0, rad_fs - 1);
-    let r = rad_frame[(i + rad_fs / 2) % rad_fs];
-    return r;
-  }, rad_rmin, 1.00, 1.00); */
+  let fn_rgba = (data, c, t, f, fw) => getRgbaSmoothAvg(data, c, t, f, fw, num_frames, fs * nsymm);
+  await drawFrames(canvas, res_image, { num_frames, frame_size: fs * nsymm, fn_rgba });
 }
 
-async function compACF(signal, num_frames, frame_size, use_fc = true) {
+async function compACF(signal, num_frames, frame_size) {
   let fs = frame_size;
   let fft_data = new Float32Array(num_frames * fs);
   let acf_data = new Float32Array(4 * num_frames * fs);
@@ -333,7 +322,7 @@ async function compACF(signal, num_frames, frame_size, use_fc = true) {
 
   for (let t = 0; t < num_frames; t++) {
     let frame = new Float32Array(fs);
-    ut.readAudioFrame(signal_ds, frame, { num_frames, frame_id: t, t_step: 1 });
+    ut.readAudioFrame(signal_ds, frame, { num_frames, frame_id: t, use_hann: conf.use_hann });
     computeFFT(frame, frame);
     fft_data.subarray(t * fs, (t + 1) * fs).set(frame);
   }
@@ -345,34 +334,27 @@ async function compACF(signal, num_frames, frame_size, use_fc = true) {
 
     for (let f = 0; f < fs; f++) {
       for (let i = 0; i < 3; i++) {
-        let r = fft_frame[f] * (use_fc ? freq_colors[4 * f + i] : 1);
+        let r = fft_frame[f] * freq_colors[4 * f + i];
         acf_data[t * fs + i * num_frames * fs + f] = r;
-        dcheck(Number.isFinite(r));
       }
     }
   }
 
   dcheck_array(acf_data);
 
-  if (!conf.acf) {
-    res_data.set(acf_data);
-  } else {
-    for (let t = 0; t < num_frames; t++) {
-      for (let i = 0; i < 3; i++) {
-        let t1 = t;
-        let t2 = Math.round(t + (1 - conf.delay) * num_frames) % num_frames;
-        let f1 = readACF(acf_data, i, t1, num_frames, fs);
-        let f2 = readACF(acf_data, i, t2, num_frames, fs);
-        let f3 = readACF(res_data, i, t1, num_frames, fs);
-        if (conf.delay != 0)
-          computeXCF(f1, f2, f3);
-        else
-          computeACF(f1, f3);
-        dcheck(Number.isFinite(f3[0]));
-      }
+
+  for (let t = 0; t < num_frames; t++) {
+    for (let i = 0; i < 3; i++) {
+      let fft = readACF(acf_data, i, t, num_frames, fs);
+      let res = readACF(res_data, i, t, num_frames, fs);
+      if (i > 0 && !conf.colorize)
+        res.set(readACF(acf_data, 0, t, num_frames, fs));
+      else
+        computeACF(fft, res);
     }
   }
 
+  dcheck_array(res_data);
   return res_data;
 }
 
@@ -383,14 +365,16 @@ function readACF(data, i_rgba, t, num_frames, frame_size) {
     .subarray(t * fs, (t + 1) * fs);
 }
 
-async function drawFrames(canvas, rgba_data, num_frames, frame_size, fn_rgba, r_min = 0, r_max = 1, a_max = 0) {
+async function drawFrames(canvas, rgba_data,
+  { num_frames, frame_size, fn_rgba, r_min = 0, r_max = 1, a_max = 0 } = {}) {
+
   let w = canvas.width;
   let h = canvas.height;
   let ctx = canvas.getContext('2d');
   let img = ctx.getImageData(0, 0, w, h);
   let fs = frame_size;
   let time = performance.now();
-  let abs_max = (a_max || conf.abs_max) * array_max(rgba_data, x => Math.abs(x));
+  let abs_max = array_max(rgba_data, x => Math.abs(x)) / conf.brightness;
 
   // for (let i = 0; i < num_frames * fs; i++)
   //   abs_max = Math.max(abs_max, Math.abs(rgba_data[i * 4 + 3]));
@@ -407,7 +391,7 @@ async function drawFrames(canvas, rgba_data, num_frames, frame_size, fn_rgba, r_
 
   let sample_rgb = (t, f) => {
     if (t < 0 || t >= num_frames) return [0, 0, 0];
-    let f_width = !conf.disk ? 1.0 : frame_size / (2 * Math.PI * (t + 0.5) / num_frames * w / 2);
+    let f_width = !conf.nrep ? 1.0 : frame_size / (2 * Math.PI * (t + 0.5) / num_frames * w / 2);
     return [0, 1, 2].map(i => fn_rgba(rgba_data, i, t, f, f_width, num_frames, fs));
   };
 
@@ -434,13 +418,20 @@ async function drawFrames(canvas, rgba_data, num_frames, frame_size, fn_rgba, r_
     return [0, 1, 2].map(i => ut.mix(a[i], b[i], x));
   };
 
+  let ttx = Math.sqrt(conf.brightness);
+  let temperature_rgb = (x) => {
+    return [x * ttx * ttx, x * ttx, x];
+  };
+
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      let [t, f] = conf.disk ? xy2tf_disk(x, y) : xy2tf_rect(x, y);
+      let [t, f] = conf.nrep ? xy2tf_disk(x, y) : xy2tf_rect(x, y);
       if (!t && !f) continue;
       let rgb1 = sample_rgb(Math.floor(t), f);
       let rgb2 = sample_rgb(Math.ceil(t), f);
       let rgb = mix_rgb(rgb1, rgb2, t - Math.floor(t));
+      if (!conf.colorize)
+        rgb = temperature_rgb(rgb[0]);
       add_rgb(x, y, rgb);
     }
 
@@ -490,9 +481,25 @@ function computeFFT(input, output) {
   dcheck(input.length == output.length);
   // let temp = FFT.expand(input);
   // let temp2 = FFT.forward(temp);
-  let temp2 = ut.forwardFFT(input).array;
-  FFT.sqr_abs(temp2, output);
+  let temp2 = ut.forwardFFT(input).data;
+  if (conf.cosine)
+    FFT.re(temp2, output);
+  else
+    FFT.sqr_abs(temp2, output);
   // dcheck(is_even(output));
+}
+
+// Same as computeXCF(input, input, output).
+// fft_data = output of computeFFT()
+function computeACF(fft_data, output) {
+  dcheck(fft_data.length == output.length);
+  let fft = FFT.inverse(FFT.expand(fft_data))
+  // let fft2 = FFT.expand(fft_data);
+  // let fft = FFT.forward(fft2)
+  if (!conf.cosine)
+    FFT.abs(fft, output);
+  else
+    FFT.sqr_abs(fft, output);
 }
 
 // https://en.wikipedia.org/wiki/Cross-correlation
@@ -511,16 +518,6 @@ function computeXCF(fft_data1, fft_data2, output) {
     let im = -re1 * im2 + re2 * im1;
     output[i] = Math.sqrt(Math.sqrt(re * re + im * im));
   }
-}
-
-// Same as computeXCF(input, input, output).
-// fft_data = output of computeFFT()
-function computeACF(fft_data, output) {
-  dcheck(fft_data.length == output.length);
-  let fft = FFT.forward(FFT.expand(fft_data))
-  // let fft2 = FFT.expand(fft_data);
-  // let fft = FFT.forward(fft2)
-  FFT.abs(fft, output);
 }
 
 async function _renderWaveform(canvas, waveform, num_frames) {
