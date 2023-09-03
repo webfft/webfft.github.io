@@ -5,7 +5,7 @@ let gui = new dat.GUI({ name: 'Settings' });
 let conf = {};
 
 conf.colorize = true;
-conf.use_hann = true;
+conf.use_winf = true;
 conf.cosine = false;
 conf.nrep = 2;
 conf.tstep = 4;
@@ -84,7 +84,7 @@ function initDebugUI() {
   gui.add(conf, 'tstep', 1, 16, 1);
   gui.add(conf, 'nrep', 0, 12, 1);
   gui.add(conf, 'brightness', 0, 25, 0.1);
-  gui.add(conf, 'use_hann');
+  gui.add(conf, 'use_winf');
   gui.add(conf, 'colorize');
   gui.add(conf, 'cosine');
 
@@ -110,7 +110,7 @@ function initFreqColors() {
   if (conf.colorize) {
     for (let i = 0; i < fs; i++) {
       let k = Math.min(i, fs - i) / fs; // 0..0.5
-      let f = ut.fract(k * 2 * sr / conf.tstep / 10000);
+      let f = ut.fract(k * 2 * sr / conf.tstep / 12000);
       let r = hann(f, 0.0, 0.05) + hann(f, 0.3, 0.4) / 2 - hann(f, 0.0, 0.4) / 3;
       let g = hann(f, 0.0, 0.25) + hann(f, 0.3, 0.6) / 2 - hann(f, 0.0, 0.6) / 3;
       let b = hann(f, 0.0, 0.75) + hann(f, 0.2, 1.0) / 2 - hann(f, 0.0, 1.0) / 3;
@@ -322,7 +322,7 @@ async function compACF(signal, num_frames, frame_size) {
 
   for (let t = 0; t < num_frames; t++) {
     let frame = new Float32Array(fs);
-    ut.readAudioFrame(signal_ds, frame, { num_frames, frame_id: t, use_hann: conf.use_hann });
+    ut.readAudioFrame(signal_ds, frame, { num_frames, frame_id: t, use_winf: conf.use_winf });
     computeFFT(frame, frame);
     fft_data.subarray(t * fs, (t + 1) * fs).set(frame);
   }
@@ -420,7 +420,7 @@ async function drawFrames(canvas, rgba_data,
 
   let ttx = Math.sqrt(conf.brightness);
   let temperature_rgb = (x) => {
-    return [x * ttx * ttx, x * ttx, x];
+    return [x * 1, x * ttx, x * ttx * ttx];
   };
 
   for (let y = 0; y < h; y++) {

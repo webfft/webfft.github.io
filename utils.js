@@ -1,20 +1,23 @@
 import { FFT } from 'https://soundshader.github.io/webfft.js';
 
+let { min, max, sin, cos, abs, PI } = Math;
+
 export const $ = (selector) => document.querySelector(selector);
 export const $$ = (selector) => document.querySelectorAll(selector);
 export const log = (...args) => console.log(args.join(' '));
 export const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 export const mix = (a, b, x) => a * (1 - x) + b * x;
 export const step = (min, x) => x < min ? 0 : 1;
+export const sqr = (x) => x * x;
 export const clamp = (x, min = 0, max = 1) => Math.max(Math.min(x, max), min);
-export const hann = (x) => x > 0 && x < 1 ? Math.sin(Math.PI * x) ** 2 : 0;
+export const hann = (x) => x > 0 && x < 1 ? sqr(Math.sin(Math.PI * x)) : 0;
 export const hann_ab = (x, a, b) => hann((x - a) / (b - a));
+export const lanczos = (x, p) => x == 0 ? 1 : sin(PI * x) * sin(PI * x / p) / (PI * PI * x * x) * p;
+export const lanczos_ab = (x, p, a, b) => lanczos((x - a) / (b - a) * 2 - 1, p);
 export const fract = (x) => x - Math.floor(x);
 export const reim2 = (re, im) => re * re + im * im;
 export const is_pow2 = (x) => (x & (x - 1)) == 0;
 export const dcheck = (x) => { if (x) return; debugger; throw new Error('dcheck failed'); }
-
-let { min, max } = Math;
 
 export function $$$(tag_name, attrs = {}, content = []) {
   let el = document.createElement(tag_name);
@@ -492,8 +495,8 @@ export function getAmpDensity(spectrogram, num_bins = 1024, amp2_map = Math.sqrt
 }
 
 // frame_size = fft_bins * 2
-export function readAudioFrame(signal, frame, 
-  { num_frames, frame_id, t_step = 1, frame_width = frame.length, use_hann = true }) {
+export function readAudioFrame(signal, frame,
+  { num_frames, frame_id, t_step = 1, frame_width = frame.length, use_winf = true }) {
   let step = signal.length / num_frames;
   let base = frame_id * step | 0;
   let len0 = Math.min(frame_width, (signal.length - 1 - base) / t_step | 0);
@@ -509,7 +512,7 @@ export function readAudioFrame(signal, frame,
   frame.fill(0);
 
   for (let i = 0; i < len0; i++) {
-    let h = use_hann ? hann(i / frame_width) : 1.0;
+    let h = use_winf ? lanczos_ab(i / frame_width, 1, 0, 1) : 1.0;
     let k = base + t_step * i | 0;
     let s = k < signal.length ? signal[k] : 0;
     frame[i] = h * s;
