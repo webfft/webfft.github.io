@@ -50,15 +50,23 @@ export class Float32Tensor {
 
     this.rank = dims.length;
     this.dims = dims;
-    this.dimension_size = ds;
+    this.dim_size = ds;
 
     this.array = this.data; // don't use
     this.dimensions = this.dims; //  don't use
   }
 
+  at(...indexes) {
+    dcheck(indexes.length == this.rank);
+    let offset = 0;
+    for (let i = 0; i < this.rank; i++)
+      offset += indexes[i] * this.dim_size[i];
+    return this.data[offset];
+  }
+
   slice(begin, end) {
     dcheck(begin >= 0 && begin < end && end <= this.dims[0]);
-    let size = this.dimension_size[0];
+    let size = this.dim_size[0];
     let dims = this.dims.slice(1);
     let data = this.data.subarray(begin * size, end * size);
     return new Float32Tensor([end - begin, ...dims], data);
@@ -101,8 +109,8 @@ export function forwardFFT(signal_re) {
 }
 
 export function inverseFFT(frame) {
-  dcheck(frame.rank == 2 && frame.dimensions[1] == 2);
-  let n = frame.dimensions[0];
+  dcheck(frame.rank == 2 && frame.dims[1] == 2);
+  let n = frame.dims[0];
   let sig2 = new Float32Array(n * 2);
   FFT.inverse(frame.array, sig2);
   return FFT.re(sig2);
@@ -111,7 +119,7 @@ export function inverseFFT(frame) {
 // Input: Float32Tensor, H x W x 2
 // Output: Float32Tensor, H x W x 2
 export function computeFFT2D(input) {
-  let [h, w, rsn] = input.dimensions;
+  let [h, w, rsn] = input.dims;
   dcheck(input.rank == 3 && rsn == 2);
 
   let output = new Float32Tensor([h, w, 2]);
@@ -1177,4 +1185,114 @@ export function rgb2hcl(r, g, b) {
 export function hcl2rgb(h, c, l) {
   let s = 0.5 * c / min(l, 1.0 - l);
   return hsl2rgb(h, min(s, 1.0), l);
+}
+
+function resampleData(src, res, { coords_fn, num_steps }) {
+  dcheck(src.rank == 2 && res.rank == 2);
+  let [src_r, src_a] = src.dims;
+  let [res_h, res_w] = res.dims;
+  let r_steps = src_r * max(1, Math.ceil(num_steps[0] / src_r));
+  let a_steps = src_a * max(1, Math.ceil(num_steps[1] / src_a));
+  let scale = res_h / r_steps * res_w / a_steps;
+  let lw = 1;
+
+  res.data.fill(0);
+
+  let lanczos_xy = (x, y) =>
+    lanczos(x, lw) * lanczos(y, lw);
+
+  let interpolate_src = (r, a) => {
+    let a0 = Math.round(a);
+    let r0 = Math.round(r);
+    if (a == a0 && r == r0)
+      return src.at(r, a);
+    let sum = 0;
+    for (let i = -lw; i <= lw; i++) {
+      for (let j = -lw; j <= lw; j++) {
+        if (i && j) continue;
+        let a1 = a0 + i, r1 = r0 + j;
+        if (a1 < 0 || a1 >= src_a || r1 < 0 || r1 >= src_r)
+          continue;
+        sum += src.at(r1, a1) * lanczos_xy(a1 - a, r1 - r);
+      }
+    }
+    return sum;
+  };
+
+  for (let sr = 0; sr < r_steps; sr++) {
+    for (let sa = 0; sa < a_steps; sa++) {
+      let r = sr / r_steps * src_r;
+      let a = sa / a_steps * src_a;
+
+      for (let [x, y, w] of coords_fn(a, r)) {
+        if (!w) continue;
+        x = Math.round(x);
+        y = Math.round(y);
+        if (x < 0 || x >= res_w || y < 0 || y >= res_h)
+          continue;
+        res.data[y * res_w + x] += interpolate_src(r, a) * scale * w;
+      }
+    }
+  }
+}
+
+export function resampleRect(src, res) {
+  dcheck(src.rank == 2 && res.rank == 2);
+  let [src_h, src_w] = src.dims;
+  let [res_h, res_w] = res.dims;
+
+  resampleData(src, res, {
+    num_steps: [res_h, res_w],
+    coords_fn: (x, y) => [[
+      (x + 0.5) / src_w * res_w - 0.5,
+      (y + 0.5) / src_h * res_h - 0.5,
+      1.0]],
+  });
+}
+
+export function resampleDisk(src, res, { num_reps = 1 } = {}) {
+  dcheck(src.rank == 2 && res.rank == 2);
+  let [src_r, src_a] = src.dims; // src.at(radius, arg)
+  let [res_h, res_w] = res.dims;
+
+  resampleData(src, res, {
+    num_steps: [
+      0.5 * max(res_w, res_h), // radius
+      0.5 * (res_w + res_h) * PI], // circumference
+    coords_fn: (a, r) => {
+      let coords = [];
+      for (let i = 0; i < num_reps; i++) {
+        let rad = (r + 0.5) / src_r;
+        let arg = (a + 0.5) / src_a * 2 * PI / num_reps + 2 * PI * i / num_reps;
+        let x = (rad * Math.sin(arg) * 0.5 + 0.5) * res_w;
+        let y = (rad * Math.cos(arg) * 0.5 + 0.5) * res_h;
+        coords.push([x, y, 1.0 / num_reps]);
+      }
+      return coords;
+    },
+  });
+}
+
+export function resampleSphere(src, res, { num_reps = 1 } = {}) {
+  dcheck(src.rank == 2 && res.rank == 2);
+  let [src_r, src_a] = src.dims; // src.at(radius, arg)
+  let [res_h, res_w] = res.dims;
+
+  resampleData(src, res, {
+    num_steps: [
+      2.0 * max(res_w, res_h),
+      0.5 * (res_w + res_h) * PI], // circumference
+    coords_fn: (a, r) => {
+      let coords = [];
+      for (let i = 0; i < num_reps; i++) {
+        let theta = (r + 0.5) / src_r * PI;
+        let phi = (a + 0.5) / src_a * 2 * PI / num_reps + 2 * PI * i / num_reps;
+        let x = (Math.sin(theta) * Math.sin(phi) * 0.5 + 0.5) * res_w;
+        let y = (Math.sin(theta) * Math.cos(phi) * 0.5 + 0.5) * res_h;
+        let z = (Math.cos(theta) * 0.5 + 0.5) * res_h;
+        coords.push([x, y, 1.0 / num_reps]);
+      }
+      return coords;
+    },
+  });
 }

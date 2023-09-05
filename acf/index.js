@@ -1,5 +1,5 @@
 import { FFT } from 'https://soundshader.github.io/webfft.js';
-import * as ut from '../utils.js';
+import * as utils from '../utils.js';
 
 let gui = new dat.GUI({ name: 'Settings' });
 let conf = {};
@@ -7,11 +7,12 @@ let conf = {};
 conf.colorize = true;
 conf.use_winf = true;
 conf.cosine = false;
-conf.nrep = 2;
+conf.sphere = false;
+conf.num_reps = 2;
 conf.tstep = 4;
 conf.s2_sens = 0.005;
 conf.rot_phi = 0.0;
-conf.brightness = 10.0;
+conf.brightness = 5.0;
 conf.max_duration = 1.5;
 conf.frame_size = 2048;
 conf.sample_rate = 48000;
@@ -29,8 +30,8 @@ let sample_files = [
   'ncnfu', 'nocu', 'nofu', 'obu', 'ocu', 'ofr', 'omcr',
   'omcu', 'omfr', 'omfu', 'probr', 'profu', 'prombr', 'prombu'];
 
-let hann = (x, a = 0, b = 1) => ut.hann((x - a) / (b - a));
-let sleep = ut.sleep;
+let hann = (x, a = 0, b = 1) => utils.hann((x - a) / (b - a));
+let sleep = utils.sleep;
 
 async function main() {
   initDebugUI();
@@ -45,12 +46,12 @@ async function main() {
 
 function playCurrentSound() {
   if (waveform)
-    ut.playSound(waveform, conf.sample_rate);
+    utils.playSound(waveform, conf.sample_rate);
 }
 
 async function loadSounds() {
   $('#sounds').innerHTML = '';
-  sound_files = await ut.selectAudioFile({ multiple: true });
+  sound_files = await utils.selectAudioFile({ multiple: true });
   log('Selected files:', sound_files.length);
   await renderSoundFilesAsGrid();
   if (sound_files.length == 1)
@@ -66,7 +67,7 @@ async function showVowels() {
 
 async function recordMic() {
   log('Recording audio');
-  let blob = await ut.recordAudio({
+  let blob = await utils.recordAudio({
     sample_rate: conf.sample_rate,
     max_duration: conf.max_duration,
   });
@@ -82,11 +83,11 @@ function initDebugUI() {
   gui.add(conf, 'frame_size', 1024, 16384, 1024);
   gui.add(conf, 'sample_rate', 4000, 48000, 4000);
   gui.add(conf, 'tstep', 1, 16, 1);
-  gui.add(conf, 'nrep', 0, 12, 1);
-  gui.add(conf, 'brightness', 0, 25, 0.1);
+  gui.add(conf, 'num_reps', 0, 12, 1);
+  gui.add(conf, 'brightness', 0.1, 15.0, 0.1);
   gui.add(conf, 'use_winf');
   gui.add(conf, 'colorize');
-  gui.add(conf, 'cosine');
+  gui.add(conf, 'sphere');
 
   let button = (name, callback) => {
     conf[name] = callback;
@@ -110,7 +111,7 @@ function initFreqColors() {
   if (conf.colorize) {
     for (let i = 0; i < fs; i++) {
       let k = Math.min(i, fs - i) / fs; // 0..0.5
-      let f = ut.fract(k * 2 * sr / conf.tstep / 12000);
+      let f = utils.fract(k * 2 * sr / conf.tstep / 12000);
       let r = hann(f, 0.0, 0.05) + hann(f, 0.3, 0.4) / 2 - hann(f, 0.0, 0.4) / 3;
       let g = hann(f, 0.0, 0.25) + hann(f, 0.3, 0.6) / 2 - hann(f, 0.0, 0.6) / 3;
       let b = hann(f, 0.0, 0.75) + hann(f, 0.2, 1.0) / 2 - hann(f, 0.0, 1.0) / 3;
@@ -144,7 +145,7 @@ function createCanvas(id = 0, nf = conf.num_frames_xs) {
   let canvas = document.createElement('canvas');
   canvas.onclick = () => renderFullScreen(id);
 
-  if (conf.nrep) {
+  if (conf.num_reps) {
     canvas.width = nf * 2;
     canvas.height = nf * 2;
   } else {
@@ -185,7 +186,7 @@ async function renderSoundFile(id, canvas, num_frames) {
 
   if (id > 0) {
     try {
-      waveform = await ut.decodeAudioFile(file, conf.sample_rate);
+      waveform = await utils.decodeAudioFile(file, conf.sample_rate);
       let duration = waveform.length / conf.sample_rate;
       log('Decoded sound:', duration.toFixed(1), 'sec', '#' + id, '(' + file.name + ')');
     } catch (err) {
@@ -265,14 +266,14 @@ function trimSilence(waveform) {
 
 async function loadWaveform() {
   let ts = Date.now();
-  waveform = await ut.DB.get('acf_data/samples/saved.pcm');
+  waveform = await utils.DB.get('acf_data/samples/saved.pcm');
   if (waveform) log('Loaded audio from local DB:', waveform.length, 'in', Date.now() - ts, 'ms');
 }
 
 async function saveWaveform() {
   try {
     let ts = Date.now();
-    await ut.DB.set('acf_data/samples/saved.pcm', waveform);
+    await utils.DB.set('acf_data/samples/saved.pcm', waveform);
     log('Saved audio to local DB:', waveform.length, 'in', Date.now() - ts, 'ms');
   } catch (err) {
     console.error('Failed to save audio:', err);
@@ -281,33 +282,24 @@ async function saveWaveform() {
 
 async function drawACF(canvas, signal, num_frames) {
   let fs = conf.frame_size;
-  let nsymm = 1;
-  let sub_signal = new Float32Array(signal.length);
-  let res_image = new Float32Array(4 * num_frames * fs * nsymm);
+  let res_image = new utils.Float32Tensor([4, num_frames, fs]);
+  let sub_image = await compACF(signal, num_frames, fs);
+  dcheck(sub_image.length == 4 * num_frames * fs);
 
-  for (let ks = 0; ks < nsymm; ks++) {
-    for (let i = 0; i < sub_signal.length; i++)
-      sub_signal[i] = signal[Math.min(ks + i * nsymm, signal.length - 1)];
-
-    let sub_image = await compACF(sub_signal, num_frames, fs);
-    dcheck(sub_image.length == 4 * num_frames * fs);
-
-    for (let t = 0; t < num_frames; t++) {
-      for (let i = 0; i < 4; i++) {
-        let src = readACF(sub_image, i, t, num_frames, fs);
-        let res = readACF(res_image, i, t, num_frames, fs * nsymm);
-        dcheck(src.length == fs);
-        dcheck(res.length == fs * nsymm);
-        // Need to swap left/right halves because
-        // in ACF the 0-th element is the largest.
-        res.set(src.subarray(fs / 2), fs * ks);
-        res.set(src.subarray(0, fs / 2), fs * ks + fs / 2);
-      }
+  for (let t = 0; t < num_frames; t++) {
+    for (let i = 0; i < 4; i++) {
+      let src = readACF(sub_image, i, t, num_frames, fs);
+      let res = readACF(res_image.data, i, t, num_frames, fs);
+      dcheck(src.length == fs);
+      dcheck(res.length == fs);
+      // Need to swap left/right halves because
+      // in ACF the 0-th element is the largest.
+      res.set(src.subarray(fs / 2), 0);
+      res.set(src.subarray(0, fs / 2), fs / 2);
     }
   }
 
-  let fn_rgba = (data, c, t, f, fw) => getRgbaSmoothAvg(data, c, t, f, fw, num_frames, fs * nsymm);
-  await drawFrames(canvas, res_image, { num_frames, frame_size: fs * nsymm, fn_rgba });
+  await drawFrames(canvas, res_image);
 }
 
 async function compACF(signal, num_frames, frame_size) {
@@ -318,11 +310,11 @@ async function compACF(signal, num_frames, frame_size) {
   let freq_colors = initFreqColors();
   let signal_ds = new Float32Array(signal.length / conf.tstep | 0);
 
-  ut.downsampleSignal(signal, signal_ds);
+  utils.downsampleSignal(signal, signal_ds);
 
   for (let t = 0; t < num_frames; t++) {
     let frame = new Float32Array(fs);
-    ut.readAudioFrame(signal_ds, frame, { num_frames, frame_id: t, use_winf: conf.use_winf });
+    utils.readAudioFrame(signal_ds, frame, { num_frames, frame_id: t, use_winf: conf.use_winf });
     computeFFT(frame, frame);
     fft_data.subarray(t * fs, (t + 1) * fs).set(frame);
   }
@@ -365,85 +357,49 @@ function readACF(data, i_rgba, t, num_frames, frame_size) {
     .subarray(t * fs, (t + 1) * fs);
 }
 
-async function drawFrames(canvas, rgba_data,
-  { num_frames, frame_size, fn_rgba, r_min = 0, r_max = 1, a_max = 0 } = {}) {
-
+async function drawFrames(canvas, rgba_data) {
   let w = canvas.width;
   let h = canvas.height;
   let ctx = canvas.getContext('2d');
   let img = ctx.getImageData(0, 0, w, h);
-  let fs = frame_size;
-  let time = performance.now();
-  let abs_max = array_max(rgba_data, x => Math.abs(x)) / conf.brightness;
+  let img_rgba = new utils.Float32Tensor([4, h, w]);
+  let time = Date.now();
+  let abs_max = array_max(rgba_data.data, x => Math.abs(x));
 
-  // for (let i = 0; i < num_frames * fs; i++)
-  //   abs_max = Math.max(abs_max, Math.abs(rgba_data[i * 4 + 3]));
+  for (let i = 0; i < rgba_data.length; i++)
+    rgba_data[i] = Math.abs(rgba_data[i]) / abs_max;
 
-  // ctx.clearRect(0, 0, w, h);
+  for (let i = 0; i < (conf.colorize ? 3 : 1); i++) {
+    let src = rgba_data.subtensor(i);
+    let res = img_rgba.subtensor(i);
+    if (!conf.num_reps)
+      utils.resampleRect(src, res);
+    else if (conf.sphere)
+      utils.resampleSphere(src, res, { num_reps: conf.num_reps });
+    else
+      utils.resampleDisk(src, res, { num_reps: conf.num_reps });
+  }
 
-  let add_rgb = (x, y, [r, g, b]) => {
-    let i = (x + y * w) * 4;
-    img.data[i + 0] += 255 * Math.abs(r) / abs_max;
-    img.data[i + 1] += 255 * Math.abs(g) / abs_max;
-    img.data[i + 2] += 255 * Math.abs(b) / abs_max;
-    img.data[i + 3] += 255;
-  };
-
-  let sample_rgb = (t, f) => {
-    if (t < 0 || t >= num_frames) return [0, 0, 0];
-    let f_width = !conf.nrep ? 1.0 : frame_size / (2 * Math.PI * (t + 0.5) / num_frames * w / 2);
-    return [0, 1, 2].map(i => fn_rgba(rgba_data, i, t, f, f_width, num_frames, fs));
-  };
-
-  let xy2tf_disk = (x, y) => {
-    let [r, a] = xy2ra(x / w * 2 - 1, y / h * 2 - 1);
-    if (r >= r_max || r <= r_min)
-      return [0, 0];
-    let t = r * num_frames;
-    let f = ((a / Math.PI + 1) / 2 + 0.75) * fs;
-    f = f * conf.nrep; // vertical symmetry
-    return [t, f];
-  };
-
-  let xy2tf_rect = (x, y) => {
-    let r = Math.abs(y / h);
-    if (r >= r_max || r <= r_min)
-      return [0, 0];
-    let t = r * num_frames;
-    let f = (x / w + 0.5) * fs;
-    return [t, f];
-  };
-
-  let mix_rgb = (a, b, x) => {
-    return [0, 1, 2].map(i => ut.mix(a[i], b[i], x));
-  };
-
-  let ttx = Math.sqrt(conf.brightness);
-  let temperature_rgb = (x) => {
-    return [x * 1, x * ttx, x * ttx * ttx];
-  };
+  log('resampled rgba data in', Date.now() - time, 'ms');
+  time = Date.now();
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      let [t, f] = conf.nrep ? xy2tf_disk(x, y) : xy2tf_rect(x, y);
-      if (!t && !f) continue;
-      let rgb1 = sample_rgb(Math.floor(t), f);
-      let rgb2 = sample_rgb(Math.ceil(t), f);
-      let rgb = mix_rgb(rgb1, rgb2, t - Math.floor(t));
+      let r = img_rgba.at(0, y, x);
+      let g = img_rgba.at(1, y, x);
+      let b = img_rgba.at(2, y, x);
       if (!conf.colorize)
-        rgb = temperature_rgb(rgb[0]);
-      add_rgb(x, y, rgb);
-    }
-
-    if (performance.now() > time + 250) {
-      ctx.putImageData(img, 0, 0);
-      await sleep(0);
-      time = performance.now();
+        [r, g, b] = [9 * r, 3 * r, r];
+      let i = (x + y * w) * 4;
+      img.data[i + 0] += 255 * Math.abs(r) * conf.brightness;
+      img.data[i + 1] += 255 * Math.abs(g) * conf.brightness;
+      img.data[i + 2] += 255 * Math.abs(b) * conf.brightness;
+      img.data[i + 3] += 255;
     }
   }
 
   ctx.putImageData(img, 0, 0);
-  await sleep(0);
+  log('flushed rgba data in', Date.now() - time, 'ms');
 }
 
 // f doesn't have to be an integer
@@ -481,7 +437,7 @@ function computeFFT(input, output) {
   dcheck(input.length == output.length);
   // let temp = FFT.expand(input);
   // let temp2 = FFT.forward(temp);
-  let temp2 = ut.forwardFFT(input).data;
+  let temp2 = utils.forwardFFT(input).data;
   if (conf.cosine)
     FFT.re(temp2, output);
   else
@@ -523,8 +479,8 @@ function computeXCF(fft_data1, fft_data2, output) {
 async function _renderWaveform(canvas, waveform, num_frames) {
   let ts = Date.now();
   let img = computeExpACF(waveform, canvas.width);
-  let sg = new ut.Float32Tensor([canvas.width, canvas.width, 2], FFT.expand(img));
-  ut.drawSpectrogram(canvas, sg, { fs_full: true, x2_mul: s => 2 * s ** 0.5 });
+  let sg = new utils.Float32Tensor([canvas.width, canvas.width, 2], FFT.expand(img));
+  utils.drawSpectrogram(canvas, sg, { fs_full: true, x2_mul: s => 2 * s ** 0.5 });
   log('exp acf image completed in', Date.now() - ts, 'ms');
 }
 
@@ -540,12 +496,12 @@ function computeExpACF(signal, img_size) {
     for (let i = 0; i < sub_signal.length; i++)
       sub_signal[i] *= hann(i / sub_signal.length);
 
-    let autocf = ut.computeAutoCorrelation(sub_signal);
+    let autocf = utils.computeAutoCorrelation(sub_signal);
     for (let i = 0; i < autocf.length; i++)
       autocf[i] = Math.abs(autocf[i]);
 
     let sampled = new Float32Array(len);
-    ut.downsampleSignal(autocf, sampled);
+    utils.downsampleSignal(autocf, sampled);
 
     dcheck(r < slices.length);
     slices[r] = sampled;
