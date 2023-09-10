@@ -98,6 +98,39 @@ export function sumTensors(...tensors) {
   return res;
 }
 
+export function re2reim(src, res = new Float32Array(src.length * 2)) {
+  let n = src.length;
+  dcheck(res.length == 2 * n);
+  for (let i = n - 1; i >= 0; i--)
+    res[2 * i] = src[i], res[2 * i + 1] = 0;
+  return res;
+}
+
+// https://en.wikipedia.org/wiki/Fast_Walsh%E2%80%93Hadamard_transform
+// fwht(fwht(a)) == a
+// fwht(a, a) is OK
+export function fwht(src, res = new Float32Array(src.length)) {
+  let h = 1, n = src.length;
+  dcheck(is_pow2(n) && res.length == src.length);
+  if (src != res) res.set(src, 0);
+
+  for (let h = 1; h < n; h *= 2) {
+    for (let i = 0; i < n; i += h * 2) {
+      for (let j = i; j < i + h; j++) {
+        let x = res[j];
+        let y = res[j + h];
+        res[j] = x + y;
+        res[j + h] = x - y;
+      }
+    }
+  }
+
+  let norm = 1 / Math.sqrt(n);
+  for (let i = 0; i < n; i++)
+    res[i] *= norm;
+  return res;
+}
+
 export function computeFFT(src, res) {
   return FFT.forward(src, res);
 }
@@ -382,7 +415,7 @@ function addFreqRGB(img, x, y, rgb) {
 }
 
 // Returns a Float32Tensor: num_frames x frame_size x 2.
-export function computeSpectrogram(signal, { num_frames, frame_size, frame_width, min_frame, max_frame }) {
+export function computeSpectrogram(signal, { transform, use_winf, num_frames, frame_size, frame_width, min_frame, max_frame }) {
   if (frame_width) dcheck(frame_width <= frame_size);
   dcheck(is_pow2(frame_size));
 
@@ -392,25 +425,26 @@ export function computeSpectrogram(signal, { num_frames, frame_size, frame_width
 
   min_frame = min_frame || 0;
   max_frame = max_frame || num_frames - 1;
+  transform = transform || ((sig, res) => forwardReFFT(sig, res, [tmp1, tmp2]));
 
   let frames = new Float32Tensor([max_frame - min_frame + 1, frame_size, 2]); // (re, im)
 
   for (let t = min_frame; t <= max_frame; t++) {
-    let res1 = frames.subtensor(t - min_frame).array;
-    readAudioFrame(signal, sig1, { num_frames, frame_id: t, frame_width });
-    forwardReFFT(sig1, res1, [tmp1, tmp2]);
+    let res1 = frames.subtensor(t - min_frame).data;
+    readAudioFrame(signal, sig1, { use_winf, num_frames, frame_id: t, frame_width });
+    transform(sig1, res1);
   }
 
   return frames;
 }
 
 // Pads the input signal with zeros for smoothness.
-export async function computePaddedSpectrogram(signal, { num_frames, frame_size, frame_width }) {
+export async function computePaddedSpectrogram(signal, { use_winf, transform, num_frames, frame_size, frame_width }) {
   let padded = new Float32Array(signal.length + frame_size * 2);
   padded.set(signal, (padded.length - signal.length) / 2);
   let frame_step = signal.length / num_frames;
   let padded_frames = padded.length / frame_step | 0;
-  let spectrogram = computeSpectrogram(padded, { num_frames: padded_frames, frame_size, frame_width });
+  let spectrogram = computeSpectrogram(padded, { use_winf, transform, num_frames: padded_frames, frame_size, frame_width });
   let null_frames = (padded_frames - num_frames) / 2 | 0;
   return spectrogram.slice(null_frames, null_frames + num_frames);
 }
