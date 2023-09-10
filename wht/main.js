@@ -1,7 +1,7 @@
 import * as utils from '../utils.js';
 
 const { $, log } = utils;
-window.fwht = utils.fwht;
+window.utils = utils;
 
 utils.setUncaughtErrorHandlers();
 let gui = new dat.GUI({ name: 'Config' });
@@ -55,24 +55,24 @@ async function redrawImg() {
   try {
     log('decoding audio file:', audio_file.name);
     let audio_signal = await utils.decodeAudioFile(audio_file, conf.sampleRate);
+    log('audio signal:', (audio_signal.length / conf.sampleRate).toFixed(1) + 's');
     let spectrogram = await utils.computePaddedSpectrogram(audio_signal, {
       use_winf: conf.useWinFn,
       num_frames: conf.numFrames,
       frame_size: conf.frameSize,
       transform: (src, res) => {
+        let tmp = res.subarray(res.length / 2);
         let wht = res.subarray(0, res.length / 2);
-        utils.fwht(src, wht);
+        utils.walshPermutation(src, wht);
+        tmp.set(wht);
+        utils.fwht(tmp, wht);
         utils.re2reim(wht, res);
       }
     });
     await draw_sg(spectrogram);
   } finally {
-    // utils.shiftCanvasData(canvas, { dx: canvas.width / 2 });
-    // utils.shiftCanvasData(canvas, { dy: canvas.height / 2 });
     is_drawing = false;
   }
 
   log('done in', Date.now() - time, 'ms');
 }
-
-

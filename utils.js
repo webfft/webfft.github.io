@@ -98,6 +98,55 @@ export function sumTensors(...tensors) {
   return res;
 }
 
+// https://en.wikipedia.org/wiki/Bit-reversal_permutation
+// bitrev(i, 16) = [0 8 4 12 2 10 6 14 1 9 5 13 3 11 7 15]
+export function bitrev(x, num_bits) {
+  let r = 0;
+  for (let i = 0; (1 << i) < num_bits; i++)
+    r = (r << 1) | (x >> i) & 1;
+  return r;
+}
+
+// invgraycode(graycode(x)) == x
+export function invgraycode(i) {
+  i ^= i >> 16;
+  i ^= i >> 8;
+  i ^= i >> 4;
+  i ^= i >> 2;
+  i ^= i >> 1;
+  return i;
+}
+
+// https://en.wikipedia.org/wiki/Gray_code
+// 0 1 3 2 6 7 5 4 12 13 15 14 10 11 9 8 ...
+export function graycode(i) {
+  return i ^ (i >> 1);
+}
+
+// https://en.wikipedia.org/wiki/Walsh_matrix
+// walsh(i, 16) = [0 8 12 4 6 14 10 2 3 11 15 7 5 13 9 1]
+export function walsh(i, n) {
+  return bitrev(graycode(i), n);
+}
+
+const walshseqs = new Map();
+export function walshPermutation(src, res = src.slice(0)) {
+  let n = src.length;
+  dcheck(is_pow2(n) && res.length == n);
+
+  let seq = walshseqs.get(n);
+  if (!seq) {
+    seq = new Int32Array(n);
+    for (let i = 0; i < n; i++)
+      seq[i] = walsh(i, n);
+    walshseqs.set(n, seq);
+  }
+
+  for (let i = 0; i < n; i++)
+    res[seq[i]] = src[i];
+  return res;
+}
+
 export function re2reim(src, res = new Float32Array(src.length * 2)) {
   let n = src.length;
   dcheck(res.length == 2 * n);
