@@ -79,6 +79,16 @@ export class Float32Tensor {
     return new Float32Tensor(d.slice(1), t.data);
   }
 
+  transpose() {
+    dcheck(this.rank == 2);
+    let [n, m] = this.dims;
+    let r = new Float32Tensor([m, n]);
+    for (let i = 0; i < n; i++)
+      for (let j = 0; j < m; j++)
+        r.data[j * n + i] = this.data[i * m + j];
+    return r;
+  }
+
   clone() {
     return new Float32Tensor(this.dims.slice(), this.data.slice(0));
   }
@@ -592,14 +602,6 @@ export function readAudioFrame(signal, frame,
   let base = frame_id * step | 0;
   let len0 = Math.min(frame_width, (signal.length - 1 - base) / t_step | 0);
 
-  // frame.set(
-  //   signal.subarray(
-  //     clamp(t, 0, n - 1),
-  //     clamp(t + len, 0, n - 1)));
-  //
-  // for (let i = 0; i < len; i++)
-  //   frame[i] *= hann(i / len);
-
   frame.fill(0);
 
   for (let i = 0; i < len0; i++) {
@@ -692,13 +694,13 @@ function convolveReSignal(sig_fft, wav, res) {
   FFT.re(FFT.inverse(res_fft), res);
 }
 
-function sampleSignal(src, res) {
+export function upsampleSignal(src, res) {
   for (let j = 0; j < res.length; j++) {
     let t = (j + 0.5) / res.length; // absolute 0..1 coordinate
     let i = t * src.length - 0.5; // fractional index in src
-    let i1 = Math.max(0, Math.floor(i));
-    let i2 = Math.min(src.length - 1, Math.ceil(i));
-    res[j] = src[i1] * (i2 - i) + src[i2] * (i - i1);
+    let a = Math.max(0, Math.floor(i));
+    let b = Math.min(src.length - 1, Math.ceil(i));
+    res[j] = mix(src[a], src[b], i - a);
   }
 }
 
@@ -782,7 +784,7 @@ export async function computeCWT(signal, {
   return output;
 }
 
-export function computeAutoCorrelation(signal) {
+export function computeAutoCorrelation(signal, res = signal.slice(0)) {
   let n = signal.length;
   let sig1 = new Float32Array(2 ** Math.ceil(Math.log2(2 * n)));
   let sig2 = sig1.slice(0);
@@ -799,7 +801,8 @@ export function computeAutoCorrelation(signal) {
   FFT.inverse(fft1, fft2);
   FFT.re(fft2, sig1);
 
-  return sig1.slice(0, n);
+  res.set(sig1.subarray(0, n));
+  return res;
 }
 
 export class AudioRecorder {

@@ -3,13 +3,15 @@ import * as utils from '../utils.js';
 
 let gui = new dat.GUI({ name: 'Settings' });
 let conf = {};
+window.conf = conf;
 
 conf.colorize = true;
 conf.use_winf = true;
 conf.cosine = false;
 conf.sphere = false;
 conf.num_reps = 2;
-conf.tstep = 4;
+conf.dt_step = 4;
+conf.acf_2d = false;
 conf.s2_sens = 0.005;
 conf.rot_phi = 0.0;
 conf.brightness = 5.0;
@@ -82,10 +84,11 @@ function initDebugUI() {
   gui.add(conf, 'num_frames_xl', 512, 2048, 512);
   gui.add(conf, 'frame_size', 1024, 16384, 1024);
   gui.add(conf, 'sample_rate', 4000, 48000, 4000);
-  gui.add(conf, 'tstep', 1, 16, 1);
+  gui.add(conf, 'dt_step', 1, 16, 1);
   gui.add(conf, 'num_reps', 0, 12, 1);
   gui.add(conf, 'brightness', 0.1, 15.0, 0.1);
   gui.add(conf, 'use_winf');
+  gui.add(conf, 'acf_2d');
   gui.add(conf, 'colorize');
   gui.add(conf, 'sphere');
 
@@ -111,7 +114,7 @@ function initFreqColors() {
   if (conf.colorize) {
     for (let i = 0; i < fs; i++) {
       let k = Math.min(i, fs - i) / fs; // 0..0.5
-      let f = utils.fract(k * 2 * sr / conf.tstep / 12000);
+      let f = utils.fract(k * 2 * sr / conf.dt_step / 12000);
       let r = hann(f, 0.0, 0.05) + hann(f, 0.3, 0.4) / 2 - hann(f, 0.0, 0.4) / 3;
       let g = hann(f, 0.0, 0.25) + hann(f, 0.3, 0.6) / 2 - hann(f, 0.0, 0.6) / 3;
       let b = hann(f, 0.0, 0.75) + hann(f, 0.2, 1.0) / 2 - hann(f, 0.0, 1.0) / 3;
@@ -258,7 +261,7 @@ function trimSilence(waveform) {
   // trim zeros at both ends
   waveform = waveform.subarray(t_min, t_max + 1);
   // need some padding on both ends for smooth edges
-  let pad = fs * conf.tstep | 0;
+  let pad = fs * conf.dt_step | 0;
   let tmp = new Float32Array(waveform.length + pad);
   tmp.set(waveform, pad);
   return tmp;
@@ -286,10 +289,10 @@ async function drawACF(canvas, signal, num_frames) {
   let sub_image = await compACF(signal, num_frames, fs);
   dcheck(sub_image.length == 4 * num_frames * fs);
 
-  for (let t = 0; t < num_frames; t++) {
-    for (let i = 0; i < 4; i++) {
-      let src = readACF(sub_image, i, t, num_frames, fs);
-      let res = readACF(res_image.data, i, t, num_frames, fs);
+  for (let cc = 0; cc < 4; cc++) {
+    for (let t = 0; t < num_frames; t++) {
+      let src = readFrame(sub_image, cc, t, num_frames, fs);
+      let res = readFrame(res_image.data, cc, t, num_frames, fs);
       dcheck(src.length == fs);
       dcheck(res.length == fs);
       // Need to swap left/right halves because
@@ -304,11 +307,12 @@ async function drawACF(canvas, signal, num_frames) {
 
 async function compACF(signal, num_frames, frame_size) {
   let fs = frame_size;
-  let fft_data = new Float32Array(num_frames * fs);
-  let acf_data = new Float32Array(4 * num_frames * fs);
-  let res_data = new Float32Array(4 * num_frames * fs);
+  let num_cc_planes = conf.colorize ? 3 : 1;
+  let dft = new utils.Float32Tensor([num_frames, fs]);
+  let acf = new utils.Float32Tensor([4, num_frames, fs]);
+  let res = new utils.Float32Tensor([4, num_frames, fs]);
   let freq_colors = initFreqColors();
-  let signal_ds = new Float32Array(signal.length / conf.tstep | 0);
+  let signal_ds = new Float32Array(signal.length / conf.dt_step | 0);
 
   utils.downsampleSignal(signal, signal_ds);
 
@@ -316,41 +320,56 @@ async function compACF(signal, num_frames, frame_size) {
     let frame = new Float32Array(fs);
     utils.readAudioFrame(signal_ds, frame, { num_frames, frame_id: t, use_winf: conf.use_winf });
     computeFFT(frame, frame);
-    fft_data.subarray(t * fs, (t + 1) * fs).set(frame);
+    dft.data.subarray(t * fs, (t + 1) * fs).set(frame);
   }
 
-  dcheck_array(fft_data);
+  dcheck_array(dft.data);
 
   for (let t = 0; t < num_frames; t++) {
-    let fft_frame = fft_data.subarray(t * fs, (t + 1) * fs);
-
+    let fft_frame = dft.data.subarray(t * fs, (t + 1) * fs);
     for (let f = 0; f < fs; f++) {
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < num_cc_planes; i++) {
         let r = fft_frame[f] * freq_colors[4 * f + i];
-        acf_data[t * fs + i * num_frames * fs + f] = r;
+        acf.data[t * fs + i * num_frames * fs + f] = r;
       }
     }
   }
 
-  dcheck_array(acf_data);
+  dcheck_array(acf.data);
 
-
-  for (let t = 0; t < num_frames; t++) {
-    for (let i = 0; i < 3; i++) {
-      let fft = readACF(acf_data, i, t, num_frames, fs);
-      let res = readACF(res_data, i, t, num_frames, fs);
-      if (i > 0 && !conf.colorize)
-        res.set(readACF(acf_data, 0, t, num_frames, fs));
-      else
-        computeACF(fft, res);
+  for (let cc = 0; cc < num_cc_planes; cc++) {
+    let res_plane = res.subtensor(cc);
+    let acf_plane = acf.subtensor(cc);
+    for (let t = 0; t < num_frames; t++) {
+      let res_vec = res_plane.subtensor(t).data;
+      let fft_vec = acf_plane.subtensor(t).data;
+      inverseFFT(fft_vec, res_vec);
     }
   }
 
-  dcheck_array(res_data);
-  return res_data;
+  if (conf.acf_2d) {
+    for (let cc = 0; cc < num_cc_planes; cc++) {
+      let plane = res.subtensor(cc).transpose();
+
+      for (let f = 0; f < fs; f++) {
+        let vec = plane.subtensor(f);
+        computeFFT(vec.data, vec.data);
+        inverseFFT(vec.data, vec.data);
+      }
+
+      res.subtensor(cc).data.set(
+        plane.transpose().data);
+    }
+  }
+
+  for (let cc = num_cc_planes; cc < 4; cc++)
+    res.subtensor(cc).data.set(res.subtensor(0).data);
+
+  dcheck_array(res.data);
+  return res.data;
 }
 
-function readACF(data, i_rgba, t, num_frames, frame_size) {
+function readFrame(data, i_rgba, t, num_frames, frame_size) {
   let fs = frame_size;
   return data
     .subarray(i_rgba * num_frames * fs, (i_rgba + 1) * num_frames * fs)
@@ -433,12 +452,10 @@ function intersect(l1, r1, l2, r2) {
 }
 
 // output[i] = abs(FFT[i])^2
-function computeFFT(input, output) {
+function computeFFT(input, output, sqr_abs = !conf.cosine) {
   dcheck(input.length == output.length);
-  // let temp = FFT.expand(input);
-  // let temp2 = FFT.forward(temp);
   let temp2 = utils.forwardFFT(input).data;
-  if (conf.cosine)
+  if (!sqr_abs)
     FFT.re(temp2, output);
   else
     FFT.sqr_abs(temp2, output);
@@ -447,12 +464,10 @@ function computeFFT(input, output) {
 
 // Same as computeXCF(input, input, output).
 // fft_data = output of computeFFT()
-function computeACF(fft_data, output) {
+function inverseFFT(fft_data, output, sqr_abs = conf.cosine) {
   dcheck(fft_data.length == output.length);
   let fft = FFT.inverse(FFT.expand(fft_data))
-  // let fft2 = FFT.expand(fft_data);
-  // let fft = FFT.forward(fft2)
-  if (!conf.cosine)
+  if (!sqr_abs)
     FFT.abs(fft, output);
   else
     FFT.sqr_abs(fft, output);
