@@ -1200,7 +1200,9 @@ export function setPixels(canvas, rgba_fn) {
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       let yx = (y * w + x) * 4;
-      let [r, g, b, a = 1] = rgba_fn(x, y, w, h);
+      let rgba = rgba_fn(x, y, w, h);
+      if (!rgba) continue;
+      let [r, g, b, a = 1] = rgba
       img.data[yx + 0] = r * 255;
       img.data[yx + 1] = g * 255;
       img.data[yx + 2] = b * 255;
@@ -1223,6 +1225,35 @@ export function drawCurve(canvas, steps, t2xy_fn) {
   }
 
   ctx.stroke();
+}
+
+export function drawSpectrumColors(canvas, { color_fn, label_fn,
+  num_marks = 11, y_min = 0.1, y_max = 0.9, x_min = 0.87, x_max = 0.88,
+  font_size = 0.014 }) {
+
+  dcheck(num_marks >= 2);
+  dcheck(color_fn && label_fn);
+
+  setPixels(canvas, (x, y, w, h) => {
+    let x_abs = (x / w - x_min) / (x_max - x_min);
+    let y_abs = (y / h - y_min) / (y_max - y_min); // 0..1
+    if (x_abs < 0 || x_abs > 1 || y_abs < 0 || y_abs > 1)
+      return null;
+    return color_fn(1.0 - y_abs, x_abs);
+  });
+
+  let font_size_px = font_size * canvas.height | 0;
+  let ctx = canvas.getContext('2d');
+  ctx.font = font_size_px + 'px monospace';
+  ctx.fillStyle = '#0f0';
+
+  for (let i = 0; i < num_marks; i++) {
+    let f = i / (num_marks - 1);
+    let str = label_fn(f);
+    let x = x_max * canvas.width + font_size_px / 2 | 0;
+    let y = mix(y_max, y_min, f) * canvas.height + font_size_px / 2 | 0;
+    ctx.fillText(str, x, y);
+  }
 }
 
 export function hsl2rgb(h, s, l) {

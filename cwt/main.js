@@ -15,6 +15,9 @@ conf.disk = false;
 let is_drawing = false;
 let audio_files = null;
 
+let x2_mul = (x2) => x2 ** (1 / conf.brightness);
+let rgb_fn = (a) => [9 * a, 3 * a, 1 * a];
+
 window.onload = init;
 
 function init() {
@@ -55,7 +58,7 @@ async function updateCWT() {
   is_drawing = true;
 
   let draw_sg = (sg, opts = {}) => utils.drawSpectrogram(canvas, sg,
-    { fs_full: true, x2_mul: s => s ** (1 / conf.brightness), ...opts });
+    { fs_full: true, x2_mul, rgb_fn, ...opts });
 
   try {
     let audio_signals = [];
@@ -115,12 +118,22 @@ async function updateCWT() {
     } else {
       await draw_sg(scaleogram);
     }
+
+    drawSpectrumColors(canvas);
   } finally {
     is_drawing = false;
   }
 
   log('done in', Date.now() - time, 'ms');
   showStatus('');
+}
+
+function drawSpectrumColors(canvas) {
+  let y2a2 = (y) => 10 ** ((y - 1) * 10);
+  utils.drawSpectrumColors(canvas, {
+    label_fn: (y) => y == 1 ? '' : (Math.log10(y2a2(y)) * 10).toFixed(0) + ' dB',
+    color_fn: (y) => rgb_fn(x2_mul(y2a2(y))),
+  });
 }
 
 function createDiskSpectrogram(spectrogram, diameter) {

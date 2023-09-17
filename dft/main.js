@@ -355,9 +355,18 @@ function drawSpectrogram() {
   canvas_fft.width = config.numFrames;
   canvas_fft.height = config.numFreqs;
   utils.drawSpectrogram(canvas_fft, spectrogram, { x2_mul, rgb_fn, num_freqs, disk: config.showDisk });
+  drawSpectrumColors(canvas_fft);
   resetCanvasTransform();
   selectArea(null);
   drawPointTag(0, 0);
+}
+
+function drawSpectrumColors(canvas) {
+  let y2a2 = (y) => 10 ** ((y - 1) * 10);
+  utils.drawSpectrumColors(canvas, {
+    label_fn: (y) => y == 1 ? '' : (Math.log10(y2a2(y)) * 10).toFixed(0) + ' dB',
+    color_fn: (y) => rgb_fn(x2_mul(y2a2(y))),
+  });
 }
 
 function getSelectedSpectrogram() {

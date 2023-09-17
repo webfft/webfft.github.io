@@ -87,10 +87,7 @@ function initDebugUI() {
   gui.add(conf, 'dt_step', 1, 16, 1);
   gui.add(conf, 'num_reps', 0, 12, 1);
   gui.add(conf, 'brightness', 0.1, 15.0, 0.1);
-  gui.add(conf, 'use_winf');
-  gui.add(conf, 'acf_2d');
   gui.add(conf, 'colorize');
-  gui.add(conf, 'sphere');
 
   let button = (name, callback) => {
     conf[name] = callback;
@@ -303,6 +300,25 @@ async function drawACF(canvas, signal, num_frames) {
   }
 
   await drawFrames(canvas, res_image);
+  drawSpectrumColors(canvas);
+}
+
+function drawSpectrumColors(canvas) {
+  utils.drawSpectrumColors(canvas, {
+    label_fn: (f) => {
+      let str = (f * conf.sample_rate / 2 / 1000).toFixed(1);
+      str = str.indexOf('.') < 0 ? str.slice(0, 2) : str.slice(0, 3);
+      str = str.replace(/\.0*$/, '');
+      return str + ' kHz';
+    },
+    color_fn: (f, temp) => {
+      temp *= conf.brightness;
+      let i = Math.round(f * conf.frame_size / 2);
+      let [r, g, b] = freq_colors.subarray(4 * i, 4 * i + 4);
+      if (!conf.colorize) [r, g, b] = [9, 3, 1];
+      return [r * temp, g * temp, b * temp];
+    }
+  });
 }
 
 async function compACF(signal, num_frames, frame_size) {
@@ -421,36 +437,6 @@ async function drawFrames(canvas, rgba_data) {
   log('flushed rgba data in', Date.now() - time, 'ms');
 }
 
-// f doesn't have to be an integer
-function getRgbaSmoothAvg(rgba_data, rgba_idx, t, f, f_width, num_frames, frame_size) {
-  dcheck(rgba_idx >= 0 && rgba_idx <= 3);
-  dcheck(t >= 0 && t < num_frames);
-  dcheck(f_width > 0 && f_width <= frame_size);
-  dcheck(rgba_data.length == num_frames * frame_size * 4);
-
-  let fs = frame_size;
-  let nf = num_frames;
-  let base = rgba_idx * nf * fs + t * fs;
-  let frame = rgba_data.subarray(base, base + fs);
-  let f_min = f - f_width / 2;
-  let f_max = f + f_width / 2;
-  let sum = 0;
-
-  for (let i = Math.floor(f_min); i <= Math.ceil(f_max); i++) {
-    let x = frame[(i + fs) % fs];
-    let w = intersect(i - 0.5, i + 0.5, f_min, f_max);
-    sum += w * Math.abs(x);
-  }
-
-  return sum / f_width;
-}
-
-function intersect(l1, r1, l2, r2) {
-  let l = Math.max(l1, l2);
-  let r = Math.min(r1, r2);
-  return Math.max(0, r - l);
-}
-
 // output[i] = abs(FFT[i])^2
 function computeFFT(input, output, sqr_abs = !conf.cosine) {
   dcheck(input.length == output.length);
@@ -489,14 +475,6 @@ function computeXCF(fft_data1, fft_data2, output) {
     let im = -re1 * im2 + re2 * im1;
     output[i] = Math.sqrt(Math.sqrt(re * re + im * im));
   }
-}
-
-async function _renderWaveform(canvas, waveform, num_frames) {
-  let ts = Date.now();
-  let img = computeExpACF(waveform, canvas.width);
-  let sg = new utils.Float32Tensor([canvas.width, canvas.width, 2], FFT.expand(img));
-  utils.drawSpectrogram(canvas, sg, { fs_full: true, x2_mul: s => 2 * s ** 0.5 });
-  log('exp acf image completed in', Date.now() - ts, 'ms');
 }
 
 function computeExpACF(signal, img_size) {
