@@ -10,7 +10,7 @@ conf.use_winf = true;
 conf.cosine = false;
 conf.sphere = false;
 conf.num_reps = 2;
-conf.dt_step = 4;
+conf.downsample = 4;
 conf.acf_2d = false;
 conf.s2_sens = 0.005;
 conf.rot_phi = 0.0;
@@ -23,7 +23,6 @@ conf.num_frames_xl = 512;
 
 let sound_files = [];
 let waveform = null;
-let freq_colors = null;
 
 // These are files in the vowels/*.ogg list.
 let sample_files = [
@@ -37,7 +36,6 @@ let sleep = utils.sleep;
 
 async function main() {
   initDebugUI();
-  initFreqColors();
   await loadWaveform();
 
   if (waveform) {
@@ -84,7 +82,7 @@ function initDebugUI() {
   gui.add(conf, 'num_frames_xl', 512, 2048, 512);
   gui.add(conf, 'frame_size', 1024, 16384, 1024);
   gui.add(conf, 'sample_rate', 4000, 48000, 4000);
-  gui.add(conf, 'dt_step', 1, 16, 1);
+  gui.add(conf, 'downsample', 1, 16, 1);
   gui.add(conf, 'num_reps', 0, 12, 1);
   gui.add(conf, 'brightness', 0.1, 15.0, 0.1);
   gui.add(conf, 'colorize');
@@ -100,33 +98,20 @@ function initDebugUI() {
   button('record_mic', recordMic);
 }
 
-function initFreqColors() {
-  let fs = conf.frame_size, sr = conf.sample_rate;
-  if (freq_colors && freq_colors.length == 4 * fs)
-    return freq_colors;
+function getFreqColor(i) {
+  dcheck(i >= 0 && i < conf.frame_size);
 
-  freq_colors = new Float32Array(4 * fs);
-  freq_colors.fill(1.0);
+  if (!conf.colorize)
+    return [1, 1, 1, 1];
 
-  if (conf.colorize) {
-    for (let i = 0; i < fs; i++) {
-      let k = Math.min(i, fs - i) / fs; // 0..0.5
-      let f = utils.fract(k * 2 * sr / conf.dt_step / 12000);
-      let r = hann(f, 0.0, 0.05) + hann(f, 0.3, 0.4) / 2 - hann(f, 0.0, 0.4) / 3;
-      let g = hann(f, 0.0, 0.25) + hann(f, 0.3, 0.6) / 2 - hann(f, 0.0, 0.6) / 3;
-      let b = hann(f, 0.0, 0.75) + hann(f, 0.2, 1.0) / 2 - hann(f, 0.0, 1.0) / 3;
-      // [r, g, b] = ut.hsl2rgb(f, 1.0, 0.5);
-      let s = Math.abs(r + g + b) + 0.01;
-
-      freq_colors[4 * i + 0] = r / s;
-      freq_colors[4 * i + 1] = g / s;
-      freq_colors[4 * i + 2] = b / s;
-      freq_colors[4 * i + 3] = 1.0;
-    }
-  }
-
-  dcheck_array(freq_colors);
-  return freq_colors;
+  let fs = conf.frame_size;
+  let sr = conf.sample_rate;
+  let k = Math.min(i, fs - i) / fs; // 0..0.5
+  let h = k * 2 * sr / conf.downsample;
+  let [r, g, b] = utils.hsl2rgb(clamp(h / 1500), 1.0, 0.5);
+  let s = r + g + b;
+  if (s > 0) r /= s, g /= s, b /= s;
+  return [r, g, b];
 }
 
 async function downloadSamples(min = 10, max = 38) {
@@ -258,7 +243,7 @@ function trimSilence(waveform) {
   // trim zeros at both ends
   waveform = waveform.subarray(t_min, t_max + 1);
   // need some padding on both ends for smooth edges
-  let pad = fs * conf.dt_step | 0;
+  let pad = fs * conf.downsample | 0;
   let tmp = new Float32Array(waveform.length + pad);
   tmp.set(waveform, pad);
   return tmp;
@@ -300,7 +285,9 @@ async function drawACF(canvas, signal, num_frames) {
   }
 
   await drawFrames(canvas, res_image);
-  drawSpectrumColors(canvas);
+
+  if (num_frames > conf.num_frames_xs)
+    drawSpectrumColors(canvas);
 }
 
 function drawSpectrumColors(canvas) {
@@ -314,7 +301,7 @@ function drawSpectrumColors(canvas) {
     color_fn: (f, temp) => {
       temp *= conf.brightness;
       let i = Math.round(f * conf.frame_size / 2);
-      let [r, g, b] = freq_colors.subarray(4 * i, 4 * i + 4);
+      let [r, g, b] = getFreqColor(i);
       if (!conf.colorize) [r, g, b] = [9, 3, 1];
       return [r * temp, g * temp, b * temp];
     }
@@ -327,8 +314,7 @@ async function compACF(signal, num_frames, frame_size) {
   let dft = new utils.Float32Tensor([num_frames, fs]);
   let acf = new utils.Float32Tensor([4, num_frames, fs]);
   let res = new utils.Float32Tensor([4, num_frames, fs]);
-  let freq_colors = initFreqColors();
-  let signal_ds = new Float32Array(signal.length / conf.dt_step | 0);
+  let signal_ds = new Float32Array(signal.length / conf.downsample | 0);
 
   utils.downsampleSignal(signal, signal_ds);
 
@@ -344,8 +330,9 @@ async function compACF(signal, num_frames, frame_size) {
   for (let t = 0; t < num_frames; t++) {
     let fft_frame = dft.data.subarray(t * fs, (t + 1) * fs);
     for (let f = 0; f < fs; f++) {
+      let rgba = getFreqColor(f);
       for (let i = 0; i < num_cc_planes; i++) {
-        let r = fft_frame[f] * freq_colors[4 * f + i];
+        let r = fft_frame[f] * rgba[i];
         acf.data[t * fs + i * num_frames * fs + f] = r;
       }
     }
