@@ -2,6 +2,7 @@ import { FFT } from 'https://soundshader.github.io/webfft.js';
 
 let { min, max, sin, cos, abs, PI } = Math;
 
+export const fft = FFT;
 export const $ = (selector) => document.querySelector(selector);
 export const $$ = (selector) => document.querySelectorAll(selector);
 export const log = (...args) => console.log(args.join(' '));
@@ -192,6 +193,13 @@ export function fwht(src, res = new Float32Array(src.length)) {
 
 export function computeFFT(src, res) {
   return FFT.forward(src, res);
+}
+
+export function zeroPadPow2(data) {
+  let n = data.length;
+  let sig = new Float32Array(1 << Math.ceil(Math.log2(n)));
+  sig.set(data);
+  return sig;
 }
 
 export function forwardFFT(signal_re) {
@@ -1256,7 +1264,7 @@ export function drawSpectrumColors(canvas, { color_fn, label_fn,
   }
 }
 
-export function hsl2rgb(h, s, l) {
+export function hsl2rgb(h, s = 1.0, l = 0.5) {
   if (!s) return [l, l, l];
 
   let q = l < 0.5 ? l * (1 + s) : l + s - l * s;

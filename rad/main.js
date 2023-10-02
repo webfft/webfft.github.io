@@ -7,7 +7,7 @@ let gui = new dat.GUI({ name: 'Config' });
 let canvas = $('canvas');
 let conf = {};
 conf.sampleRate = 48000;
-conf.frameSize = 4096;
+conf.frameSize = 1024;
 conf.numFrames = 1024;
 conf.brightness = 2;
 let is_drawing = false;
@@ -56,8 +56,23 @@ async function redrawRT() {
       num_frames: conf.numFrames,
       frame_size: conf.frameSize,
     });
-    let correlogram = computeAutoCorrelation(spectrogram);
-    let diskogram = createDiskSpectrogram(correlogram);
+    // let correlogram = computeAutoCorrelation(spectrogram);
+    // let diskogram = createDiskSpectrogram(correlogram);
+
+    let size = Math.max(spectrogram.dims[0], spectrogram.dims[1]);
+    let diskogram = reverseMapping(spectrogram, {
+      res_size: [size, size],
+      map_values: (re, im) => [re * re + im * im, 0],
+      map_coords: (y, x, h, w) => {
+        let [r, a] = utils.xy2ra(x / w * 2 - 1, y / h * 2 - 1);
+        if (r > 1) return null;
+        let t = abs(a / PI) * spectrogram.dims[0];
+        let f = (r + 0.5) % 1 * spectrogram.dims[1];
+        return [t, f];
+      },
+    });
+
+    // draw_sg(diskogram);
     let radogram = utils.computeFFT2D(diskogram);
     await draw_sg(radogram);
   } finally {
@@ -67,6 +82,38 @@ async function redrawRT() {
   }
 
   log('done in', Date.now() - time, 'ms');
+}
+
+function reverseMapping(src, { map_coords, map_values, res_size }) {
+  dcheck(map_coords);
+  dcheck(map_values);
+  dcheck(src.rank == 3 && src.dims[2] == 2);
+  let [sh, sw] = src.dims;
+  let [rh, rw] = res_size || [sh, sw];
+  let res = new utils.Float32Tensor([rh, rw, 2]);
+
+  for (let ry = 0; ry < rh; ry++) {
+    for (let rx = 0; rx < rw; rx++) {
+      let syx = map_coords(ry, rx, rh, rw);
+      if (!syx) continue;
+      let [sy, sx] = syx;
+      sy = Math.round(sy);
+      sx = Math.round(sx);
+      if (sy < 0 || sy >= sh) continue;
+      if (sx < 0 || sx >= sw) continue;
+      let ri = ry * rw + rx;
+      let si = sy * sw + sx;
+      let re = src.data[si * 2 + 0];
+      let im = src.data[si * 2 + 1];
+      [re, im] = map_values(re, im);
+      dcheck(Number.isFinite(re));
+      dcheck(Number.isFinite(im));
+      res.data[ri * 2 + 0] = re;
+      res.data[ri * 2 + 1] = im;
+    }
+  }
+
+  return res;
 }
 
 function computeAutoCorrelation(spectrogram) {

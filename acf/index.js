@@ -5,13 +5,13 @@ let gui = new dat.GUI({ name: 'Settings' });
 let conf = {};
 window.conf = conf;
 
-conf.colorize = true;
+conf.colorize = false;
+conf.color = [9, 3, 1];
 conf.use_winf = true;
-conf.cosine = false;
 conf.sphere = false;
 conf.num_reps = 2;
 conf.downsample = 4;
-conf.acf_2d = false;
+conf.phaseid = 0;
 conf.s2_sens = 0.005;
 conf.rot_phi = 0.0;
 conf.brightness = 5.0;
@@ -82,7 +82,8 @@ function initDebugUI() {
   gui.add(conf, 'num_frames_xl', 512, 2048, 512);
   gui.add(conf, 'frame_size', 1024, 16384, 1024);
   gui.add(conf, 'sample_rate', 4000, 48000, 4000);
-  gui.add(conf, 'downsample', 1, 16, 1);
+  gui.add(conf, 'downsample', 1, 32, 1);
+  // gui.add(conf, 'phaseid', 0, 31, 1);
   gui.add(conf, 'num_reps', 0, 12, 1);
   gui.add(conf, 'brightness', 0.1, 15.0, 0.1);
   gui.add(conf, 'colorize');
@@ -98,20 +99,19 @@ function initDebugUI() {
   button('record_mic', recordMic);
 }
 
-function getFreqColor(i) {
-  dcheck(i >= 0 && i < conf.frame_size);
+function getFreqColor(i, fs) {
+  dcheck(i >= 0 && i < fs);
 
   if (!conf.colorize)
     return [1, 1, 1, 1];
 
-  let fs = conf.frame_size;
   let sr = conf.sample_rate;
   let k = Math.min(i, fs - i) / fs; // 0..0.5
   let h = k * 2 * sr / conf.downsample;
   let [r, g, b] = utils.hsl2rgb(clamp(h / 1500), 1.0, 0.5);
   let s = r + g + b;
   if (s > 0) r /= s, g /= s, b /= s;
-  return [r, g, b];
+  return [r, g, b, 1];
 }
 
 async function downloadSamples(min = 10, max = 38) {
@@ -266,25 +266,13 @@ async function saveWaveform() {
 }
 
 async function drawACF(canvas, signal, num_frames) {
-  let fs = conf.frame_size;
-  let res_image = new utils.Float32Tensor([4, num_frames, fs]);
-  let sub_image = await compACF(signal, num_frames, fs);
-  dcheck(sub_image.length == 4 * num_frames * fs);
+  let width = canvas.width;
+  let height = canvas.height;
+  let frame_size = conf.frame_size;
+  let img1 = getImgDataFromSignal(signal,
+    { num_frames, frame_size: frame_size * 1, width, height });
 
-  for (let cc = 0; cc < 4; cc++) {
-    for (let t = 0; t < num_frames; t++) {
-      let src = readFrame(sub_image, cc, t, num_frames, fs);
-      let res = readFrame(res_image.data, cc, t, num_frames, fs);
-      dcheck(src.length == fs);
-      dcheck(res.length == fs);
-      // Need to swap left/right halves because
-      // in ACF the 0-th element is the largest.
-      res.set(src.subarray(fs / 2), 0);
-      res.set(src.subarray(0, fs / 2), fs / 2);
-    }
-  }
-
-  await drawFrames(canvas, res_image);
+  drawCanvasImageData(canvas, img1, { color: conf.color });
 
   if (num_frames > conf.num_frames_xs)
     drawSpectrumColors(canvas);
@@ -301,22 +289,28 @@ function drawSpectrumColors(canvas) {
     color_fn: (f, temp) => {
       temp *= conf.brightness;
       let i = Math.round(f * conf.frame_size / 2);
-      let [r, g, b] = getFreqColor(i);
-      if (!conf.colorize) [r, g, b] = [9, 3, 1];
+      let [r, g, b] = getFreqColor(i, conf.frame_size);
+      if (!conf.colorize)
+        [r, g, b] = conf.color;
       return [r * temp, g * temp, b * temp];
     }
   });
 }
 
-async function compACF(signal, num_frames, frame_size) {
+function subsample(signal, ds = conf.downsample, shift = conf.phaseid) {
+  let signal_ds = new Float32Array(signal.length / ds | 0);
+  for (let i = 0; i < signal_ds.length; i++)
+    signal_ds[i] = signal[Math.min(i * ds + shift, signal.length - 1)];
+  return signal_ds;
+}
+
+function compACF(signal, num_frames, frame_size) {
   let fs = frame_size;
-  let num_cc_planes = conf.colorize ? 3 : 1;
+  let num_cc_planes = conf.colorize ? 4 : 1;
   let dft = new utils.Float32Tensor([num_frames, fs]);
   let acf = new utils.Float32Tensor([4, num_frames, fs]);
   let res = new utils.Float32Tensor([4, num_frames, fs]);
-  let signal_ds = new Float32Array(signal.length / conf.downsample | 0);
-
-  utils.downsampleSignal(signal, signal_ds);
+  let signal_ds = subsample(signal);
 
   for (let t = 0; t < num_frames; t++) {
     let frame = new Float32Array(fs);
@@ -326,14 +320,15 @@ async function compACF(signal, num_frames, frame_size) {
   }
 
   dcheck_array(dft.data);
+  acf.subtensor(0).data.set(dft.data);
 
   for (let t = 0; t < num_frames; t++) {
     let fft_frame = dft.data.subarray(t * fs, (t + 1) * fs);
     for (let f = 0; f < fs; f++) {
-      let rgba = getFreqColor(f);
+      let rgba = getFreqColor(f, fs);
       for (let i = 0; i < num_cc_planes; i++) {
         let r = fft_frame[f] * rgba[i];
-        acf.data[t * fs + i * num_frames * fs + f] = r;
+        acf.data[(i + 1) * num_frames * fs + t * fs + f] = r;
       }
     }
   }
@@ -350,49 +345,29 @@ async function compACF(signal, num_frames, frame_size) {
     }
   }
 
-  if (conf.acf_2d) {
-    for (let cc = 0; cc < num_cc_planes; cc++) {
-      let plane = res.subtensor(cc).transpose();
-
-      for (let f = 0; f < fs; f++) {
-        let vec = plane.subtensor(f);
-        computeFFT(vec.data, vec.data);
-        inverseFFT(vec.data, vec.data);
-      }
-
-      res.subtensor(cc).data.set(
-        plane.transpose().data);
-    }
-  }
-
   for (let cc = num_cc_planes; cc < 4; cc++)
     res.subtensor(cc).data.set(res.subtensor(0).data);
 
   dcheck_array(res.data);
-  return res.data;
+  return res;
 }
 
-function readFrame(data, i_rgba, t, num_frames, frame_size) {
-  let fs = frame_size;
-  return data
-    .subarray(i_rgba * num_frames * fs, (i_rgba + 1) * num_frames * fs)
-    .subarray(t * fs, (t + 1) * fs);
+function getImgDataFromSignal(signal, { num_frames, frame_size, width, height }) {
+  let rgba_data = compACF(signal, num_frames, frame_size);
+  return getImgRGBA(rgba_data, { width, height });
 }
 
-async function drawFrames(canvas, rgba_data) {
-  let w = canvas.width;
-  let h = canvas.height;
-  let ctx = canvas.getContext('2d');
-  let img = ctx.getImageData(0, 0, w, h);
+function getImgRGBA(rgba_data, { width, height }) {
+  let w = width;
+  let h = height;
   let img_rgba = new utils.Float32Tensor([4, h, w]);
-  let time = Date.now();
   let abs_max = array_max(rgba_data.data, x => Math.abs(x));
 
   for (let i = 0; i < rgba_data.length; i++)
     rgba_data[i] = Math.abs(rgba_data[i]) / abs_max;
 
-  for (let i = 0; i < (conf.colorize ? 3 : 1); i++) {
-    let src = rgba_data.subtensor(i);
+  for (let i = conf.colorize ? 0 : 3; i < 4; i++) {
+    let src = rgba_data.subtensor((i + 1) % 4);
     let res = img_rgba.subtensor(i);
     if (!conf.num_reps)
       utils.resampleRect(src, res);
@@ -402,106 +377,50 @@ async function drawFrames(canvas, rgba_data) {
       utils.resampleDisk(src, res, { num_reps: conf.num_reps });
   }
 
-  log('resampled rgba data in', Date.now() - time, 'ms');
-  time = Date.now();
+  return img_rgba;
+}
+
+function drawCanvasImageData(canvas, img_rgba, { color }) {
+  let w = canvas.width;
+  let h = canvas.height;
+  let ctx = canvas.getContext('2d');
+  let img = ctx.getImageData(0, 0, w, h);
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      let r = img_rgba.at(0, y, x);
-      let g = img_rgba.at(1, y, x);
-      let b = img_rgba.at(2, y, x);
+      let r = Math.abs(img_rgba.at(0, y, x));
+      let g = Math.abs(img_rgba.at(1, y, x));
+      let b = Math.abs(img_rgba.at(2, y, x));
+      let a = Math.abs(img_rgba.at(3, y, x));
+      let s = Math.max(r, g, b);
+      if (!s) s = 1e-6;
       if (!conf.colorize)
-        [r, g, b] = [9 * r, 3 * r, r];
+        [r, g, b, s] = [...color, 3];
       let i = (x + y * w) * 4;
-      img.data[i + 0] += 255 * Math.abs(r) * conf.brightness;
-      img.data[i + 1] += 255 * Math.abs(g) * conf.brightness;
-      img.data[i + 2] += 255 * Math.abs(b) * conf.brightness;
+      img.data[i + 0] += 255 * conf.brightness * Math.abs(a * r / s);
+      img.data[i + 1] += 255 * conf.brightness * Math.abs(a * g / s);
+      img.data[i + 2] += 255 * conf.brightness * Math.abs(a * b / s);
       img.data[i + 3] += 255;
     }
   }
 
   ctx.putImageData(img, 0, 0);
-  log('flushed rgba data in', Date.now() - time, 'ms');
 }
 
 // output[i] = abs(FFT[i])^2
-function computeFFT(input, output, sqr_abs = !conf.cosine) {
+function computeFFT(input, output) {
   dcheck(input.length == output.length);
   let temp2 = utils.forwardFFT(input).data;
-  if (!sqr_abs)
-    FFT.re(temp2, output);
-  else
-    FFT.sqr_abs(temp2, output);
+  FFT.sqr_abs(temp2, output);
   // dcheck(is_even(output));
 }
 
 // Same as computeXCF(input, input, output).
 // fft_data = output of computeFFT()
-function inverseFFT(fft_data, output, sqr_abs = conf.cosine) {
+function inverseFFT(fft_data, output) {
   dcheck(fft_data.length == output.length);
   let fft = FFT.inverse(FFT.expand(fft_data))
-  if (!sqr_abs)
-    FFT.abs(fft, output);
-  else
-    FFT.sqr_abs(fft, output);
-}
-
-// https://en.wikipedia.org/wiki/Cross-correlation
-// fft_data1 = output of computeFFT()
-// fft_data2 = output of computeFFT()
-function computeXCF(fft_data1, fft_data2, output) {
-  dcheck(fft_data1.length == output.length);
-  dcheck(fft_data2.length == output.length);
-  let fft1 = FFT.forward(FFT.expand(fft_data1))
-  let fft2 = FFT.forward(FFT.expand(fft_data2))
-  for (let i = 0; i < output.length; i++) {
-    let re1 = fft1[2 * i], im1 = fft1[2 * i + 1];
-    let re2 = fft2[2 * i], im2 = fft2[2 * i + 1];
-    // (re, im) = (re1, im1) * (re2, -im2)
-    let re = +re1 * re2 + im1 * im2;
-    let im = -re1 * im2 + re2 * im1;
-    output[i] = Math.sqrt(Math.sqrt(re * re + im * im));
-  }
-}
-
-function computeExpACF(signal, img_size) {
-  let slices = new Array(img_size / 2); // slices[radius].length == 2*PI*radius
-
-  for (let r = 0; r < img_size / 2; r++) {
-    let len = Math.round(2 * Math.PI * (r + 0.5));
-    let t0 = Math.round((r + 0.5) / img_size * 2 * signal.length / 2);
-    let w0 = t0;
-
-    let sub_signal = signal.slice(t0 - w0, t0 + w0);
-    for (let i = 0; i < sub_signal.length; i++)
-      sub_signal[i] *= hann(i / sub_signal.length);
-
-    let autocf = utils.computeAutoCorrelation(sub_signal);
-    for (let i = 0; i < autocf.length; i++)
-      autocf[i] = Math.abs(autocf[i]);
-
-    let sampled = new Float32Array(len);
-    utils.downsampleSignal(autocf, sampled);
-
-    dcheck(r < slices.length);
-    slices[r] = sampled;
-  }
-
-  let image = new Float32Array(img_size ** 2);
-
-  for (let y = 0; y < img_size; y++) {
-    for (let x = 0; x < img_size; x++) {
-      let [r, a] = xy2ra(x / img_size * 2 - 1, y / img_size * 2 - 1);
-      let t = Math.round(r * slices.length);
-      if (t >= slices.length) continue;
-      let f = Math.round((a / Math.PI + 1) / 2 * slices[t].length);
-      f = f * 3;
-      f = f % slices[t].length;
-      image[y * img_size + x] = slices[t][f];
-    }
-  }
-
-  return image;
+  FFT.abs(fft, output);
 }
 
 function dcheck(x) {
