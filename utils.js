@@ -354,22 +354,22 @@ export function drawSpectrogram(canvas, spectrogram, {
       drawSpectrogramFrame(img, frame, x, rgb_reim, fs_full, num_freqs);
     }
   } else {
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        let dx = (x - 0.5) / w * 2 - 1;
-        let dy = (y - 0.5) / h * 2 - 1;
-        let [r, a] = xy2ra(dy, dx);
-        if (r >= 1.0) continue;
-        let t = Math.abs((a / Math.PI + 2.0) % 1.0) * num_frames;
-        let f = (Math.sign(a) * r * 0.5 * num_freqs + frame_size) % frame_size;
-        dcheck(t >= 0 && t < num_frames);
-        dcheck(f >= 0 && f < frame_size);
-        let tf = Math.round(t) * frame_size + Math.round(f);
-        let re = spectrogram.data[tf * 2 + 0];
-        let im = spectrogram.data[tf * 2 + 1];
-        addFreqRGB(img, x, y, rgb_reim(re, im));
-      }
-    }
+    let tmp = new Float32Tensor([h, w, 4]);
+    reverseDiskMapping(tmp, spectrogram, {
+      map_value: ([re, im]) => {
+        let [r, g, b] = rgb_reim(re, im);
+        return [r, g, b, 1];
+      },
+      map_coord: (r, a) => {
+        r = (a > 0.5 ? r : -r) * 0.5;
+        a = a * 2 % 1;
+        return [r, a];
+      },
+    });
+
+    dcheck(tmp.data.length == img.data.length);
+    for (let i = 0; i < tmp.data.length; i++)
+      img.data[i] = 255 * tmp.data[i];
   }
 
   ctx.putImageData(img, 0, 0);
@@ -1310,6 +1310,38 @@ export function rgb2hcl(r, g, b) {
 export function hcl2rgb(h, c, l) {
   let s = 0.5 * c / min(l, 1.0 - l);
   return hsl2rgb(h, min(s, 1.0), l);
+}
+
+export function reverseDiskMapping(res, src, { map_value, map_coord }) {
+  let [h, w, n = 1] = res.dims;
+  let [sh, sw, sn = 1] = src.dims;
+  dcheck(h * w > 0 && sh * sw > 0);
+  dcheck(map_value || n == sn);
+
+  let tmp = new Float32Array(sn);
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let dx = (x - 0.5) / w * 2 - 1;
+      let dy = (y - 0.5) / h * 2 - 1;
+      let [r, a] = xy2ra(dy, dx);
+      if (r >= 1.0) continue;
+
+      a = (a / Math.PI * 0.5 + 1.0) % 1.0;
+      if (map_coord)
+        [r, a] = map_coord(r, a);
+
+      let t = (Math.round(a * sh) % sh + sh) % sh;
+      let f = (Math.round(r * sw) % sw + sw) % sw;
+      let offset = (t * sw + f) * sn;
+      for (let i = 0; i < sn; i++)
+        tmp[i] = src.data[offset + i];
+
+      let res_val = map_value ?
+        map_value(tmp) : tmp;
+      res.data.set(res_val, (y * w + x) * n);
+    }
+  }
 }
 
 function resampleData(src, res, { coords_fn, num_steps }) {

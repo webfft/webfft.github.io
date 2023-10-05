@@ -72,7 +72,7 @@ function init() {
 function initDebugGUI() {
   gui.close();
   gui.add(config, 'dbRange', 0.25, 5, 0.25);
-  gui.add(config, 'sampleRate', 4000, maxSampleRate, 1000);
+  gui.add(config, 'sampleRate', 4000, 48000, 4000);
   gui.add(config, 'frameSize', 256, 8192, 256);
   gui.add(config, 'frameWidth', 256, 4096, 256);
   gui.add(config, 'numFrames', 256, 4096, 256);
@@ -352,7 +352,7 @@ async function computeSpectrogram() {
 
 function drawSpectrogram() {
   let num_freqs = config.numFreqs;
-  canvas_fft.width = config.numFrames;
+  canvas_fft.width = config.showDisk ? num_freqs : config.numFrames;
   canvas_fft.height = config.numFreqs;
   utils.drawSpectrogram(canvas_fft, spectrogram, { x2_mul, rgb_fn, num_freqs, disk: config.showDisk });
   drawSpectrumColors(canvas_fft);
