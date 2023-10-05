@@ -1460,3 +1460,13 @@ export function resampleSphere(src, res, { num_reps = 1 } = {}) {
     },
   });
 }
+
+export function drawText(canvas, text, { x, y, font, color }) {
+  if (!text) return;
+  let ctx = canvas.getContext('2d');
+  if (x < 0) x += canvas.width;
+  if (y < 0) y += canvas.height;
+  if (font) ctx.font = font;
+  if (color) ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+}

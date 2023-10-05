@@ -109,6 +109,10 @@ async function redrawImg() {
 
     if (!conf.disk)
       utils.shiftCanvasData(canvas, { dy: canvas.height / 2 });
+
+    let file_name = (audio_file.name || '').replace(/\.\w+$/, '');
+    utils.drawText(canvas, (conf.sampleRate / 1000) + ' kHz ' + file_name,
+      { x: 8, y: -8, font: '16px monospace', color: '#f84' });
   } finally {
     is_drawing = false;
   }
@@ -121,7 +125,8 @@ async function saveAudioSignal() {
     if (!audio_signal) return;
     console.log('saving audio signal to DB');
     let blob = utils.generateWavFile(audio_signal, conf.sampleRate);
-    await DB.set(DB_PATH, blob);
+    let file = new File([blob], audio_file.name, { type: blob.type });
+    await DB.set(DB_PATH, file);
   } catch (err) {
     console.error(err);
   }
@@ -132,7 +137,6 @@ async function loadAudioSignal() {
     console.log('loading audio signal from DB');
     audio_file = await DB.get(DB_PATH);
     if (!audio_file) return;
-    console.log('loaded audio:', audio_file);
     audio_signal = await utils.decodeWavFile(audio_file);
     audio_signal.audio_file = audio_file;
     audio_signal.sample_rate = conf.sampleRate;
