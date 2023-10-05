@@ -1,0 +1,58 @@
+<html>
+
+<head>
+  <title>Sound Circle</title>
+  <link rel="stylesheet"
+        href="style.css" />
+</head>
+
+<body>
+  <h1>Birdsongs Visualizer</h1>
+
+  <p>
+    A few examples (images are clickable):</p>
+
+  <p>
+    <a href="img/xl_ex1.jpg"><img src="img/ex1.jpg"></a>
+    <a href="img/xl_ex2.jpg"><img src="img/ex2.jpg"></a>
+    <a href="img/xl_ex3.jpg"><img src="img/ex3.jpg"></a>
+    <a href="img/xl_ex4.jpg"><img src="img/ex4.jpg"></a>
+    <a href="img/xl_ex5.jpg"><img src="img/ex5.jpg"></a>
+    <a href="img/xl_ex6.jpg"><img src="img/ex6.jpg"></a>
+    <a href="img/xl_ex7.jpg"><img src="img/ex7.jpg"></a>
+  </p>
+
+  <p>
+    Steps:
+  <ol>
+    <li>Download a random birdsong from <a href="https://xeno-canto.org/explore/random">xeno-canto.org</a></li>
+    <li><a id="upload">Click</a> on the image below to select the birdsong.</li>
+    <li>Click <a id="zoomin">zoom-in</a> and <a id="zoomout">zoom-out</a> to adjust sample rate.</li>
+    <li><a id="br_inc">Increase</a> or <a id="br_dec">decrease</a> brightness of the image.</li>
+    <li>Alternatively: <a id="record">record</a> some audio using your mic.</li>
+  </ol>
+
+  Audio is processed on the client.
+  </p>
+
+  <canvas width="1024"
+          height="1024"></canvas>
+
+  <p>
+    This is the well known DFT spectrogram mapped to a circle. Compare (images are clickable):
+  </p>
+  <p>
+    <a href="img/xl_ex0.jpg"><img src="img/ex0.jpg"></a>
+    <a href="img/xl_ex1.jpg"><img src="img/ex1.jpg"></a>
+  </p>
+
+  <p>
+    <a href="https://github.com/webfft/webfft.github.io/cir">https://github.com/webfft/webfft.github.io/cir</a>
+  </p>
+
+  <script src="/dat.gui.js"></script>
+  <script src="main.js"
+          type="module"></script>
+</body>
+
+</html>

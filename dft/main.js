@@ -205,8 +205,14 @@ async function recordAudioPCM() {
   }
 }
 
+function stopRecording() {
+  console.info('Releasing mic'); // this will stop the recorder
+  mic_stream.getTracks().map((t) => t.stop());
+  mic_stream = null;
+}
+
 // Deprecated in favor of recordAudioPCM.
-async function recordAudio() {
+async function recordAudioMR() {
   mic_stream = await getMicStream();
 
   await showStatus('Initializing MediaRecorder');
@@ -226,12 +232,6 @@ async function recordAudio() {
 
   await showStatus('Recording...', { 'Stop': stopRecording });
   recorder.start();
-}
-
-function stopRecording() {
-  console.info('Releasing mic'); // this will stop the recorder
-  mic_stream.getTracks().map((t) => t.stop());
-  mic_stream = null;
 }
 
 function getAudioWindow() {
@@ -615,8 +615,7 @@ async function saveSelectedArea() {
   }
 
   await showStatus('Generating a .wav file');
-  let data = utils.generateWavFile(wave, config.sampleRate);
-  let blob = new Blob([data], { type: 'audio/wav' });
+  let blob = utils.generateWavBlob(wave, config.sampleRate);
   let a = document.createElement('a');
   a.download = blob.size + '.wav';
   a.href = URL.createObjectURL(blob);

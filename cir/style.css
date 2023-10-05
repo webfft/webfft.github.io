@@ -1,0 +1,19 @@
+body {
+  font-family: monospace;
+}
+
+img {
+  width: 128px;
+  height: 128px;
+}
+
+canvas {
+  background: #000;
+  cursor: pointer;
+}
+
+a {
+  cursor: pointer;
+  text-decoration: underline;
+  font-weight: bold;
+}

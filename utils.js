@@ -891,8 +891,7 @@ export class AudioRecorder {
     dcheck(data.byteLength % 4 == 0);
     let wave = new Float32Array(data);
     log('Recorded audio:', (wave.length / this.sample_rate).toFixed(2), 'sec');
-    let wav_buffer = generateWavFile(wave, this.sample_rate);
-    this.audio_blob = new Blob([wav_buffer], { type: 'audio/wav' });
+    this.audio_blob = generateWavFile(wave, this.sample_rate);
     this.onaudiodata?.(this.audio_blob);
     return this.audio_blob;
   }
@@ -926,7 +925,15 @@ export function generateWavFile(wave, sample_rate) {
   for (let i = 0; i < len; i++)
     i16[22 + i] = wave[i] * 0x7FFF;
 
-  return i16.buffer;
+  return new Blob([i16.buffer], { type: 'audio/wav' });
+}
+
+export async function decodeWavFile(blob) {
+  let i16 = new Int16Array(await blob.arrayBuffer());
+  let res = new Float32Array(i16.subarray(22));
+  for (let i = 0; i < res.length; i++)
+    res[i] /= 0x7FFF;
+  return res;
 }
 
 class FFTWorker {
