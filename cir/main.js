@@ -26,7 +26,7 @@ async function init() {
   initDebugGUI();
   canvas.onclick = () => uploadAudio();
   $('#upload').onclick = () => uploadAudio();
-  $('#record').onclick = () => startRecording();
+  $('#record').onclick = () => recordAudio();
   $('#zoomin').onclick = () => zoomIn(4000);
   $('#zoomout').onclick = () => zoomIn(-4000);
   $('#br_inc').onclick = () => changeBrightness(+0.5);
@@ -104,7 +104,7 @@ async function redrawImg() {
     r /= max, g /= max, b /= max;
     let rgb_fn = (x) => [x * r, x * g, x * b];
     let pow = 1.0 / conf.brightness;
-    await utils.drawSpectrogram(canvas, spectrogram,
+    await utils.drawSpectrogram(canvas, spectrogram.transpose(),
       { disk: conf.disk, fs_full: true, rgb_fn, x2_mul: s => s ** pow });
 
     if (!conf.disk)
@@ -145,46 +145,7 @@ async function loadAudioSignal() {
   }
 }
 
-async function getMicStream() {
-  await utils.showStatus('Requesting mic access');
-  return navigator.mediaDevices.getUserMedia({
-    audio: {
-      channelCount: 1,
-      sampleSize: 16,
-      sampleRate: { exact: conf.sampleRate },
-      echoCancellation: false,
-      noiseSuppression: false,
-      autoGainControl: false,
-    }
-  });
-}
-
-async function startRecording() {
-  if (is_recording) return;
-  is_recording = true;
-  mic_stream = await getMicStream();
-
-  try {
-    await utils.showStatus('Initializing AudioRecorder');
-    let recorder = new utils.AudioRecorder(mic_stream, conf.sampleRate);
-    recorder.onaudiodata = async (blob) => {
-      audio_file = blob;
-      await sleep(50); // don't block the caller
-      redrawImg();
-    };
-    await recorder.start();
-    await utils.showStatus('Recording...', { 'Stop': stopRecording });
-  } catch (err) {
-    await stopRecording();
-    throw err;
-  }
-}
-
-function stopRecording() {
-  if (!is_recording) return;
-  console.log('Releasing the mic MediaStream');
-  mic_stream.getTracks().map((t) => t.stop());
-  mic_stream = null;
-  is_recording = false;
-  utils.showStatus('');
+async function recordAudio() {
+  audio_file = await utils.recordMic({ sample_rate: conf.sampleRate });
+  await redrawImg();
 }

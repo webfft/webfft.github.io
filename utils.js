@@ -81,17 +81,27 @@ export class Float32Tensor {
   }
 
   transpose() {
-    dcheck(this.rank == 2);
-    let [n, m] = this.dims;
-    let r = new Float32Tensor([m, n]);
-    for (let i = 0; i < n; i++)
-      for (let j = 0; j < m; j++)
-        r.data[j * n + i] = this.data[i * m + j];
+    dcheck(this.rank >= 2);
+    let [n, m, ...ds] = this.dims;
+    let dsn = this.dim_size[1];
+    let r = new Float32Tensor([m, n, ...ds]);
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < m; j++) {
+        let jni = (j * n + i) * dsn;
+        let imj = (i * m + j) * dsn;
+        for (let k = 0; k < dsn; k++)
+          r.data[jni + k] = this.data[imj + k];
+      }
+    }
     return r;
   }
 
   clone() {
     return new Float32Tensor(this.dims.slice(), this.data.slice(0));
+  }
+
+  max() {
+    return this.data.reduce((s, x) => Math.max(s, x), -Infinity);
   }
 }
 
@@ -334,16 +344,17 @@ export function applyBandpassFilter(signal, filter_fn) {
   return inverseFFT(fft);
 }
 
-export function drawSpectrogram(canvas, spectrogram, {
-  x2_mul = s => s, rgb_fn = s => [s * 9, s * 3, s * 1], sqrabs_max = 0,
-  reim_fn = reim2, disk = false, fs_full = false, clear = true, num_freqs = 0 } = {}) {
+export async function drawSpectrogram(canvas, spectrogram, {
+  x2_mul = s => s, rgb_fn = s => [s * 9, s * 3, s * 1], sqrabs_max = 0, ctoken, num_reps = 2, r_zoom = 1,
+  reim_fn = reim2, disk = false, highq = false, fs_full = false, clear = true, num_freqs = 0 } = {}) {
 
   let h = canvas.height;
   let w = canvas.width;
   let ctx = canvas.getContext('2d');
   let img = ctx.getImageData(0, 0, w, h);
   sqrabs_max = sqrabs_max || getSpectrogramMax(spectrogram, reim_fn);
-  let rgb_reim = (re, im) => rgb_fn(x2_mul(reim_fn(re, im) / sqrabs_max));
+  let amp_fn = (re, im) => x2_mul(reim_fn(re, im) / sqrabs_max);
+  let rgb_reim = (re, im) => rgb_fn(amp_fn(re, im));
   let [num_frames, frame_size] = spectrogram.dims;
 
   if (clear) img.data.fill(0);
@@ -354,22 +365,26 @@ export function drawSpectrogram(canvas, spectrogram, {
       drawSpectrogramFrame(img, frame, x, rgb_reim, fs_full, num_freqs);
     }
   } else {
-    let tmp = new Float32Tensor([h, w, 4]);
-    reverseDiskMapping(tmp, spectrogram, {
-      map_value: ([re, im]) => {
-        let [r, g, b] = rgb_reim(re, im);
-        return [r, g, b, 1];
-      },
-      map_coord: (r, a) => {
-        r = (a > 0.5 ? r : -r) * 0.5;
-        a = a * 2 % 1;
-        return [r, a];
-      },
+    let tmp = new Float32Tensor([h, w]);
+    let amps = new Float32Tensor([num_frames, frame_size]);
+    dcheck(amps.data.length * 2 == spectrogram.data.length);
+    for (let i = 0; i < amps.data.length; i++)
+      amps.data[i] = amp_fn(spectrogram.data[2 * i], spectrogram.data[2 * i + 1]);
+
+    let mapping = highq ?
+      resampleDisk : reverseDiskMapping;
+
+    await mapping(amps, tmp, {
+      ctoken,
+      num_reps,
+      r_zoom,
+      fs_full,
     });
 
-    dcheck(tmp.data.length == img.data.length);
+    // dcheck(tmp.max() > 0);
+    dcheck(tmp.data.length * 4 == img.data.length);
     for (let i = 0; i < tmp.data.length; i++)
-      img.data[i] = 255 * tmp.data[i];
+      addFreqRGB(img, i, rgb_fn(tmp.data[i]));
   }
 
   ctx.putImageData(img, 0, 0);
@@ -468,13 +483,12 @@ function drawSpectrogramFrame(img, frame, x, rgb_fn, fs_full, num_freqs) {
     let re = frame.array[f * 2];
     let im = frame.array[f * 2 + 1];
     let rgb = rgb_fn(re, im);
-    addFreqRGB(img, x, y, rgb);
+    addFreqRGB(img, y * w + x, rgb);
   }
 }
 
-function addFreqRGB(img, x, y, rgb) {
-  let i = (x + y * img.width) * 4;
-
+function addFreqRGB(img, yw_x, rgb) {
+  let i = yw_x * 4;
   img.data[i + 0] += 255 * rgb[0];
   img.data[i + 1] += 255 * rgb[1];
   img.data[i + 2] += 255 * rgb[2];
@@ -792,6 +806,7 @@ export async function computeCWT(signal, {
   return output;
 }
 
+// Computes autocorrelation of an arbitrary length signal.
 export function computeAutoCorrelation(signal, res = signal.slice(0)) {
   let n = signal.length;
   let sig1 = new Float32Array(2 ** Math.ceil(Math.log2(2 * n)));
@@ -1319,15 +1334,23 @@ export function hcl2rgb(h, c, l) {
   return hsl2rgb(h, min(s, 1.0), l);
 }
 
-export function reverseDiskMapping(res, src, { map_value, map_coord }) {
-  let [h, w, n = 1] = res.dims;
-  let [sh, sw, sn = 1] = src.dims;
-  dcheck(h * w > 0 && sh * sw > 0);
-  dcheck(map_value || n == sn);
+export async function ctcheck(ctoken) {
+  if (!ctoken || Date.now() < 100 + (ctoken.time || 0))
+    return;
+  await sleep(1);
+  if (ctoken.cancelled)
+    throw new Error('Cancelled');
+  ctoken.time = Date.now();
+}
 
-  let tmp = new Float32Array(sn);
+async function reverseDiskMapping(src, res, { fs_full = false, r_zoom = 1, num_reps = 1, ctoken }) {
+  dcheck(res.rank == 2 && src.rank == 2);
+  let [h, w] = res.dims;
+  let [sh, sw] = src.dims;
+  dcheck(h * w > 0 && sh * sw > 0);
 
   for (let y = 0; y < h; y++) {
+    await ctcheck(ctoken);
     for (let x = 0; x < w; x++) {
       let dx = (x - 0.5) / w * 2 - 1;
       let dy = (y - 0.5) / h * 2 - 1;
@@ -1335,30 +1358,30 @@ export function reverseDiskMapping(res, src, { map_value, map_coord }) {
       if (r >= 1.0) continue;
 
       a = (a / Math.PI * 0.5 + 1.0) % 1.0;
-      if (map_coord)
-        [r, a] = map_coord(r, a);
 
-      let t = (Math.round(a * sh) % sh + sh) % sh;
-      let f = (Math.round(r * sw) % sw + sw) % sw;
-      let offset = (t * sw + f) * sn;
-      for (let i = 0; i < sn; i++)
-        tmp[i] = src.data[offset + i];
+      if (fs_full)
+        r = r * (a > 0.5 ? 0.5 : -0.5);
+      r = r / r_zoom;
+      r = (r % 1 + 1) % 1;
+      a = a * num_reps % 1;
+      // dcheck(r >= 0 && r <= 1);
+      // dcheck(a >= 0 && a <= 1);
 
-      let res_val = map_value ?
-        map_value(tmp) : tmp;
-      res.data.set(res_val, (y * w + x) * n);
+      let t = Math.min(Math.round(r * sh), sh - 1);
+      let f = Math.min(Math.round(a * sw), sw - 1);
+      res.data[y * w + x] = src.data[t * sw + f];
     }
   }
 }
 
-function resampleData(src, res, { coords_fn, num_steps }) {
+async function resampleData(src, res, { ctoken, coords_fn, num_steps }) {
   dcheck(src.rank == 2 && res.rank == 2);
+  const lw = 1;
   let [src_r, src_a] = src.dims;
   let [res_h, res_w] = res.dims;
   let r_steps = src_r * max(1, Math.ceil(num_steps[0] / src_r));
   let a_steps = src_a * max(1, Math.ceil(num_steps[1] / src_a));
-  let scale = res_h / r_steps * res_w / a_steps;
-  let lw = 1;
+  let weights = new Float32Tensor([res_h, res_w]);
 
   res.data.fill(0);
 
@@ -1368,8 +1391,8 @@ function resampleData(src, res, { coords_fn, num_steps }) {
   let interpolate_src = (r, a) => {
     let a0 = Math.round(a);
     let r0 = Math.round(r);
-    if (a == a0 && r == r0)
-      return src.at(r, a);
+    if (a == a0 && r == r0 || lw == 0)
+      return src.at(r0, a0);
     let sum = 0;
     for (let i = -lw; i <= lw; i++) {
       for (let j = -lw; j <= lw; j++) {
@@ -1377,49 +1400,57 @@ function resampleData(src, res, { coords_fn, num_steps }) {
         let a1 = a0 + i, r1 = r0 + j;
         if (a1 < 0 || a1 >= src_a || r1 < 0 || r1 >= src_r)
           continue;
-        sum += src.at(r1, a1) * lanczos_xy(a1 - a, r1 - r);
+        let w = lanczos_xy(a1 - a, r1 - r);
+        sum += src.at(r1, a1) * w;
       }
     }
     return sum;
   };
 
   for (let sr = 0; sr < r_steps; sr++) {
+    await ctcheck(ctoken);
     for (let sa = 0; sa < a_steps; sa++) {
       let r = sr / r_steps * src_r;
       let a = sa / a_steps * src_a;
 
-      for (let [x, y, w] of coords_fn(a, r)) {
-        if (!w) continue;
+      for (let [x, y] of coords_fn(a, r)) {
         x = Math.round(x);
         y = Math.round(y);
         if (x < 0 || x >= res_w || y < 0 || y >= res_h)
           continue;
-        res.data[y * res_w + x] += interpolate_src(r, a) * scale * w;
+        let val = interpolate_src(r, a);
+        res.data[y * res_w + x] += val;
+        weights.data[y * res_w + x] += 1.0;
       }
     }
   }
+
+  for (let i = 0; i < res.data.length; i++)
+    if (weights.data[i] > 0)
+      res.data[i] /= weights.data[i];
 }
 
-export function resampleRect(src, res) {
+export async function resampleRect(src, res, { ctoken } = {}) {
   dcheck(src.rank == 2 && res.rank == 2);
   let [src_h, src_w] = src.dims;
   let [res_h, res_w] = res.dims;
 
-  resampleData(src, res, {
+  await resampleData(src, res, {
+    ctoken,
     num_steps: [res_h, res_w],
     coords_fn: (x, y) => [[
       (x + 0.5) / src_w * res_w - 0.5,
-      (y + 0.5) / src_h * res_h - 0.5,
-      1.0]],
+      (y + 0.5) / src_h * res_h - 0.5]],
   });
 }
 
-export function resampleDisk(src, res, { num_reps = 1 } = {}) {
+export async function resampleDisk(src, res, { ctoken, fs_full = false, r_zoom = 1, num_reps = 1 } = {}) {
   dcheck(src.rank == 2 && res.rank == 2);
   let [src_r, src_a] = src.dims; // src.at(radius, arg)
   let [res_h, res_w] = res.dims;
 
-  resampleData(src, res, {
+  await resampleData(src, res, {
+    ctoken,
     num_steps: [
       0.5 * max(res_w, res_h), // radius
       0.5 * (res_w + res_h) * PI], // circumference
@@ -1427,22 +1458,29 @@ export function resampleDisk(src, res, { num_reps = 1 } = {}) {
       let coords = [];
       for (let i = 0; i < num_reps; i++) {
         let rad = (r + 0.5) / src_r;
-        let arg = (a + 0.5) / src_a * 2 * PI / num_reps + 2 * PI * i / num_reps;
+        let arg = (a + 0.5) / src_a;
+        // dcheck(arg >= 0 && arg <= 1);
+        // dcheck(rad >= 0 && rad <= 1);
+        if (fs_full)
+          rad = arg > 0.5 ? rad * 2 : 1 - rad * 2;
+        rad = rad * r_zoom;
+        arg = (arg + i) * 2 * PI / num_reps;
         let x = (rad * Math.sin(arg) * 0.5 + 0.5) * res_w;
         let y = (rad * Math.cos(arg) * 0.5 + 0.5) * res_h;
-        coords.push([x, y, 1.0 / num_reps]);
+        coords.push([x, y]);
       }
       return coords;
     },
   });
 }
 
-export function resampleSphere(src, res, { num_reps = 1 } = {}) {
+export async function resampleSphere(src, res, { num_reps = 1, ctoken } = {}) {
   dcheck(src.rank == 2 && res.rank == 2);
   let [src_r, src_a] = src.dims; // src.at(radius, arg)
   let [res_h, res_w] = res.dims;
 
-  resampleData(src, res, {
+  await resampleData(src, res, {
+    ctoken,
     num_steps: [
       2.0 * max(res_w, res_h),
       0.5 * (res_w + res_h) * PI], // circumference
@@ -1454,7 +1492,7 @@ export function resampleSphere(src, res, { num_reps = 1 } = {}) {
         let x = (Math.sin(theta) * Math.sin(phi) * 0.5 + 0.5) * res_w;
         let y = (Math.sin(theta) * Math.cos(phi) * 0.5 + 0.5) * res_h;
         let z = (Math.cos(theta) * 0.5 + 0.5) * res_h;
-        coords.push([x, y, 1.0 / num_reps]);
+        coords.push([x, y]);
       }
       return coords;
     },
@@ -1469,4 +1507,78 @@ export function drawText(canvas, text, { x, y, font, color }) {
   if (font) ctx.font = font;
   if (color) ctx.fillStyle = color;
   ctx.fillText(text, x, y);
+}
+
+// Returns a Promise<Blob>.
+export async function recordMic({ sample_rate = 48000 } = {}) {
+  let mic_stream;
+  let on_complete;
+  let audio_file = new Promise((resolve) => {
+    on_complete = resolve;
+  });
+
+  async function getMicStream() {
+    await showStatus('Requesting mic access');
+    return navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        sampleSize: 16,
+        sampleRate: { exact: sample_rate },
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      }
+    });
+  }
+
+  async function startRecording() {
+    mic_stream = await getMicStream();
+
+    try {
+      await showStatus('Initializing AudioRecorder');
+      let recorder = new AudioRecorder(mic_stream, sample_rate);
+      recorder.onaudiodata = (blob) => on_complete(blob);
+      await recorder.start();
+      await showStatus('Recording...', { 'Stop': stopRecording });
+    } catch (err) {
+      await stopRecording();
+      throw err;
+    }
+  }
+
+  function stopRecording() {
+    if (!mic_stream) return;
+    console.log('Releasing the mic MediaStream');
+    mic_stream.getTracks().map((t) => t.stop());
+    mic_stream = null;
+    showStatus('');
+  }
+
+  await startRecording();
+  return audio_file;
+}
+
+function trimSilenceLeft(signal, frame_width, threshold) {
+  dcheck(signal.length > 0);
+  dcheck(frame_width > 0);
+  let n = signal.length;
+  let a = new Float32Array(n);
+  let sum = 0;
+  let amax = 0;
+  let sig2 = (i) => i >= 0 && i < n ? sqr(signal[i]) : 0;
+
+  for (let i = 0; i < n; i++) {
+    sum += sig2(i) - sig2(i - frame_width);
+    a[i] = sum;
+    amax = Math.max(amax, sum);
+  }
+
+  let j = a.findIndex((sum, i) => sum >= amax * threshold);
+  return signal.slice(Math.max(0, j - frame_width + 1));
+}
+
+export function trimSilence(signal, frame_width, threshold = 0.01) {
+  signal = trimSilenceLeft(signal, frame_width, threshold).reverse();
+  signal = trimSilenceLeft(signal, frame_width, threshold).reverse();
+  return signal;
 }

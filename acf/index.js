@@ -269,7 +269,7 @@ async function drawACF(canvas, signal, num_frames) {
   let width = canvas.width;
   let height = canvas.height;
   let frame_size = conf.frame_size;
-  let img1 = getImgDataFromSignal(signal,
+  let img1 = await getImgDataFromSignal(signal,
     { num_frames, frame_size: frame_size * 1, width, height });
 
   drawCanvasImageData(canvas, img1, { color: conf.color });
@@ -352,12 +352,12 @@ function compACF(signal, num_frames, frame_size) {
   return res;
 }
 
-function getImgDataFromSignal(signal, { num_frames, frame_size, width, height }) {
+async function getImgDataFromSignal(signal, { num_frames, frame_size, width, height }) {
   let rgba_data = compACF(signal, num_frames, frame_size);
   return getImgRGBA(rgba_data, { width, height });
 }
 
-function getImgRGBA(rgba_data, { width, height }) {
+async function getImgRGBA(rgba_data, { width, height }) {
   let w = width;
   let h = height;
   let img_rgba = new utils.Float32Tensor([4, h, w]);
@@ -370,11 +370,11 @@ function getImgRGBA(rgba_data, { width, height }) {
     let src = rgba_data.subtensor((i + 1) % 4);
     let res = img_rgba.subtensor(i);
     if (!conf.num_reps)
-      utils.resampleRect(src, res);
+      await utils.resampleRect(src, res);
     else if (conf.sphere)
-      utils.resampleSphere(src, res, { num_reps: conf.num_reps });
+      await utils.resampleSphere(src, res, { num_reps: conf.num_reps });
     else
-      utils.resampleDisk(src, res, { num_reps: conf.num_reps });
+      await utils.resampleDisk(src, res, { num_reps: conf.num_reps });
   }
 
   return img_rgba;

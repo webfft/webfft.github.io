@@ -1,0 +1,66 @@
+<html>
+
+<head>
+  <title>Vowels Visualizer</title>
+  <link rel="stylesheet"
+        href="style.css" />
+</head>
+
+<body>
+  <h1>Vowels Visualizer</h1>
+
+  <p>
+    A few examples (images are clickable):</p>
+
+  <p>
+    <a href="img/xl_ex1.jpg"><img src="img/ex1.jpg"></a>
+    <a href="img/xl_ex2.jpg"><img src="img/ex2.jpg"></a>
+    <a href="img/xl_ex3.jpg"><img src="img/ex3.jpg"></a>
+    <a href="img/xl_ex4.jpg"><img src="img/ex4.jpg"></a>
+    <a href="img/xl_ex5.jpg"><img src="img/ex5.jpg"></a>
+    <a href="img/xl_ex6.jpg"><img src="img/ex6.jpg"></a>
+    <a href="img/xl_ex7.jpg"><img src="img/ex7.jpg"></a>
+    <a href="img/xl_ex8.jpg"><img src="img/ex8.jpg"></a>
+    <a href="img/xl_ex9.jpg"><img src="img/ex9.jpg"></a>
+  </p>
+
+  <p>
+    Steps:
+  <ol>
+    <li><a id="record">Record</a> a vowel sound using your mic or <a id="upload">upload</a> a recording.</li>
+    <li>Click <a id="zoomin">zoom-in</a> and <a id="zoomout">zoom-out</a> to adjust the sample rate.</li>
+    <li><a id="br_inc">Increase</a> or <a id="br_dec">decrease</a> brightness of the image.</li>
+  </ol>
+
+  Audio is processed on the client.
+  </p>
+
+  <canvas width="1024"
+          height="1024"></canvas>
+
+  <p>
+    This is the autocorrelation spectrogram mapped to a circle. Compare (images are clickable):
+    <ol>
+      <li>Image 1. The good old spectrogram that shows (re^2+im^2) values of the DFT. One column represents ~150 ms of audio.</li>
+      <li>Image 2. One more DFT is applied to each column of the spectrogram. This is how the autocorrelation of signal[x*T..(x+1)*T] is computed.</li>
+      <li>Image 3. Finally the image is mapped to a circle.</li>
+    </ol>
+  </p>
+  <p>
+    <a href="img/xl_ex1_dft.jpg"><img src="img/ex1_dft.jpg"></a>
+    <a href="img/xl_ex1_acf.jpg"><img src="img/ex1_acf.jpg"></a>
+    <a href="img/xl_ex1.jpg"><img src="img/ex1.jpg"></a>
+  </p>
+
+  <p>
+    <a href="https://github.com/webfft/webfft.github.io">https://github.com/webfft/webfft.github.io</a>
+  </p>
+
+  <p>2023</p>
+
+  <script src="/dat.gui.js"></script>
+  <script src="main.js"
+          type="module"></script>
+</body>
+
+</html>
