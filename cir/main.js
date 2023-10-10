@@ -9,15 +9,13 @@ let conf = {};
 conf.sampleRate = 48000;
 conf.frameSize = 1024;
 conf.numFrames = 2048;
-conf.brightness = 2;
+conf.brightness = 20;
 conf.color = [255, 85, 28];
 conf.disk = true;
 let is_drawing = false;
-let is_recording = false;
 let audio_file = null;
 let audio_signal = null;
 let spectrogram = null;
-let mic_stream = null;
 
 window.onload = init;
 utils.setUncaughtErrorHandlers();
@@ -29,8 +27,8 @@ async function init() {
   $('#record').onclick = () => recordAudio();
   $('#zoomin').onclick = () => zoomIn(4000);
   $('#zoomout').onclick = () => zoomIn(-4000);
-  $('#br_inc').onclick = () => changeBrightness(+0.5);
-  $('#br_dec').onclick = () => changeBrightness(-0.5);
+  $('#br_inc').onclick = () => changeBrightness(+5);
+  $('#br_dec').onclick = () => changeBrightness(-5);
   await loadAudioSignal();
   if (audio_signal)
     redrawImg();
@@ -54,7 +52,7 @@ function initDebugGUI() {
   gui.add(conf, 'sampleRate', 4000, 48000, 4000);
   gui.add(conf, 'frameSize', 256, 4096, 256);
   gui.add(conf, 'numFrames', 256, 4096, 256);
-  gui.add(conf, 'brightness', 0, 6, 0.1);
+  gui.add(conf, 'brightness', 5, 100, 5);
   gui.addColor(conf, 'color');
   gui.add(conf, 'disk');
   conf.redraw = () => hardRefresh();
@@ -100,12 +98,13 @@ async function redrawImg() {
 
     console.log('drawing spectrogram');
     let [r, g, b] = conf.color;
-    let max = 0.1 * Math.max(r, g, b);
+    let max = Math.max(r, g, b);
+    let pow = conf.brightness;
     r /= max, g /= max, b /= max;
-    let rgb_fn = (x) => [x * r, x * g, x * b];
-    let pow = 1.0 / conf.brightness;
+    let rgb_fn = (x) => [x * r * pow, x * g * pow, x * b * pow];
+    let reim_fn = (re, im) => Math.sqrt(re * re + im * im);
     await utils.drawSpectrogram(canvas, spectrogram.transpose(),
-      { disk: conf.disk, fs_full: true, rgb_fn, x2_mul: s => s ** pow });
+      { disk: conf.disk, fs_full: true, rgb_fn, reim_fn });
 
     if (!conf.disk)
       utils.shiftCanvasData(canvas, { dy: canvas.height / 2 });
