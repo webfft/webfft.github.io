@@ -1577,7 +1577,7 @@ function trimSilenceLeft(signal, frame_width, threshold) {
   return signal.slice(Math.max(0, j - frame_width + 1));
 }
 
-export function trimSilence(signal, frame_width, threshold = 0.01) {
+export function trimSilence(signal, frame_width, threshold = 0.001) {
   signal = trimSilenceLeft(signal, frame_width, threshold).reverse();
   signal = trimSilenceLeft(signal, frame_width, threshold).reverse();
   return signal;
