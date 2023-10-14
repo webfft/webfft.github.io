@@ -541,7 +541,6 @@ export function getAvgSpectrum(spectrogram) {
       spectrum[f] += reim2(frame[2 * f], frame[2 * f + 1]) / num_frames;
   }
 
-
   return spectrum;
 }
 

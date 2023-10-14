@@ -98,6 +98,38 @@ async function uploadAudio() {
   await redrawImg();
 }
 
+async function updateSpectrogram() {
+  if (spectrogram?.audio_signal == audio_signal)
+    return;
+  console.log('computing spectrogram');
+  let dsrate = Math.ceil(conf.sampleRate / conf.targetRate);
+  let lowpass_signal = new Float32Array(audio_signal.length / dsrate | 0);
+  for (let i = 0; i < lowpass_signal.length; i++)
+    lowpass_signal[i] = audio_signal[i * dsrate + 0];
+
+  lowpass_signal = utils.trimSilence(lowpass_signal, conf.frameSize);
+  spectrogram = await utils.computePaddedSpectrogram(lowpass_signal, {
+    num_frames: conf.numFrames,
+    frame_size: conf.frameSize,
+  });
+  spectrogram.audio_signal = audio_signal;
+}
+
+async function updateCorrelogram() {
+  if (!conf.acf || correlogram?.spectrogram == spectrogram)
+    return;
+  console.log('computing autocorrelogram');
+  correlogram = spectrogram.clone();
+  correlogram.spectrogram = spectrogram;
+  let tmp = new Float32Array(conf.frameSize * 2);
+  for (let t = 0; t < conf.numFrames; t++) {
+    let frame = correlogram.subtensor(t);
+    fft.sqr_abs_reim(frame.data, frame.data);
+    fft.inverse(frame.data, tmp);
+    frame.data.set(tmp);
+  }
+}
+
 async function redrawImg() {
   if (ctoken || !audio_file)
     return;
@@ -115,46 +147,20 @@ async function redrawImg() {
       await ctcheck(ctoken);
     }
 
-    if (spectrogram?.audio_signal != audio_signal) {
-      console.log('computing spectrogram');
-      let dsrate = Math.ceil(conf.sampleRate / conf.targetRate);
-      let lowpass_signal = new Float32Array(audio_signal.length / dsrate | 0);
-      for (let i = 0; i < lowpass_signal.length; i++)
-        lowpass_signal[i] = audio_signal[i * dsrate + 0];
-
-      lowpass_signal = utils.trimSilence(lowpass_signal, conf.frameSize);
-      spectrogram = await utils.computePaddedSpectrogram(lowpass_signal, {
-        num_frames: conf.numFrames,
-        frame_size: conf.frameSize,
-      });
-      spectrogram.audio_signal = audio_signal;
-      await ctcheck(ctoken);
-    }
-
-    // plain spectrogram preview
+    await updateSpectrogram();
+    await ctcheck(ctoken);
+    // plain spectrogram drawing
     await drawSG(spectrogram);
     await ctcheck(ctoken);
 
-    if (conf.acf && correlogram?.spectrogram != spectrogram) {
-      console.log('computing autocorrelogram');
-      correlogram = spectrogram.clone();
-      correlogram.spectrogram = spectrogram;
-      let tmp = new Float32Array(conf.frameSize * 2);
-      for (let t = 0; t < conf.numFrames; t++) {
-        let frame = correlogram.subtensor(t);
-        fft.sqr_abs_reim(frame.data, frame.data);
-        fft.inverse(frame.data, tmp);
-        frame.data.set(tmp);
-      }
-      await ctcheck(ctoken);
-    }
-
+    await updateCorrelogram();
+    await ctcheck(ctoken);
     // low-quality drawing
     await drawSG(conf.acf ? correlogram : spectrogram, { disk: conf.disk, fs_full: !conf.disk });
     await ctcheck(ctoken);
 
     if (conf.disk) {
-      console.log('drawing highq spectrogram');
+      console.log('drawing high-quality spectrogram');
       await drawSG(conf.acf ? correlogram : spectrogram, { disk: conf.disk, highq: true, fs_full: !conf.disk });
     }
 
