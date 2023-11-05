@@ -15,3 +15,7 @@ However the wavelet function can be an arbitrary signal, including the signal th
 [![](img/cwt2.jpg)](img/cwt2big.jpg)
 [![](img/cwt3.jpg)](img/cwt3big.jpg)
 [![](img/cwt4.jpg)](img/cwt4big.jpg)
+
+CWT of a vowel:
+
+[![](img/d74xs.jpg)](img/d74.jpg)
