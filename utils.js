@@ -18,6 +18,7 @@ export const lanczos_ab = (x, p, a, b) => lanczos((x - a) / (b - a) * 2 - 1, p);
 export const fract = (x) => x - Math.floor(x);
 export const reim2 = (re, im) => re * re + im * im;
 export const is_pow2 = (x) => (x & (x - 1)) == 0;
+export const hhmmss = (sec) => new Date(sec*1000).toISOString().slice(11, -1);
 export const dcheck = (x) => { if (x) return; debugger; throw new Error('dcheck failed'); }
 
 export function $$$(tag_name, attrs = {}, content = []) {

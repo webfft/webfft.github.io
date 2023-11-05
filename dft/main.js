@@ -19,7 +19,7 @@ let canvas_timeline = $('#timeline');
 let actions = [];
 let timer = 0;
 let config = {}, prev_config = {};
-let defaultSampleRate = 48000;
+let defaultSampleRate = 24000;
 config.sampleRate = defaultSampleRate; // should match the audio sample rate
 config.frameSize = 1024; // FFT size
 config.frameWidth = 1024; // <= frameSize, usually it's 20-200 ms worth of samples
@@ -29,11 +29,12 @@ config.dbRange = 1.0; // log10(re^2+im^2)
 config.audioKbps = 128;
 config.timeMin = 0; // sec
 config.timeMax = 0; // sec
+config.showHalf = true;
 config.showPhase = false;
 config.showDisk = false;
 
-let minSampleRate = 3000;
-let maxSampleRate = 384000;
+let minSampleRate = 4000;
+let maxSampleRate = 96000;
 let audio_file = null;
 let audio_signal = null;
 let spectrogram = null;
@@ -49,7 +50,7 @@ let pct100 = (x) => (x * 100).toFixed(2) + '%';
 
 window.onload = init;
 window.onerror = (event, source, lineno, colno, error) => showStatus(error);
-window.onunhandledrejection = (event) => showStatus(event.reason);
+window.onunhandledrejection = (event) => showStatus(event.reason, { 'Hide': utils.hideStatus });
 
 function init() {
   $('#play').onclick = () => schedule(playSelectedArea);
@@ -77,6 +78,7 @@ function initDebugGUI() {
   gui.add(config, 'frameWidth', 256, 4096, 256);
   gui.add(config, 'numFrames', 256, 4096, 256);
   gui.add(config, 'numFreqs', 256, 2048, 256);
+  gui.add(config, 'showHalf');
   gui.add(config, 'showPhase');
   gui.add(config, 'showDisk');
   config.confirm = processUpdatedConfig;
@@ -115,17 +117,30 @@ function processUpdatedConfig() {
   config.timeMin = (config.timeMin * 100 | 0) / 100;
   config.timeMax = (config.timeMax * 100 | 0) / 100;
 
-  if (config.sampleRate != prev_config.sampleRate)
+  const DRAW = 1, COMP = 2, DECODE = 3;
+  const prop_levels = {
+    frameSize: COMP,
+    frameWidth: COMP,
+    numFreqs: COMP,
+    numFrames: COMP,
+    timeMin: COMP,
+    timeMax: COMP,
+    showPhase: COMP,
+    sampleRate: DECODE,
+  };
+
+  let max_level = 0;
+  for (let p in config) {
+    let level = prop_levels[p] || DRAW;
+    if (config[p] != prev_config[p])
+      max_level = Math.max(max_level, level);
+  }
+
+  if (max_level == DECODE)
     schedule(decodeAudioFile);
-  else if (config.frameSize != prev_config.frameSize || config.numFrames != prev_config.numFrames)
+  else if (max_level == COMP)
     schedule(computeSpectrogram);
-  else if (config.frameWidth != prev_config.frameWidth || config.numFreqs != prev_config.numFreqs)
-    schedule(computeSpectrogram);
-  else if (config.timeMin != prev_config.timeMin || config.timeMax != prev_config.timeMax)
-    schedule(computeSpectrogram);
-  else if (config.showPhase != prev_config.showPhase)
-    schedule(computeSpectrogram);
-  else if (config.dbRange != prev_config.dbRange || config.showDisk != prev_config.showDisk)
+  else if (max_level == DRAW)
     schedule(drawSpectrogram);
 
   prev_config = JSON.parse(JSON.stringify(config));
@@ -148,6 +163,7 @@ async function openFile() {
   config.timeMin = 0;
   config.timeMax = 0;
   await decodeAudioFile();
+  prev_config = JSON.parse(JSON.stringify(config));
 }
 
 async function openSample(file_url = 'ogg/lapwing.mp3') {
@@ -354,8 +370,11 @@ function drawSpectrogram() {
   let num_freqs = config.numFreqs;
   canvas_fft.width = config.showDisk ? num_freqs : config.numFrames;
   canvas_fft.height = config.numFreqs;
-  utils.drawSpectrogram(canvas_fft, spectrogram, { x2_mul, rgb_fn, num_freqs, disk: config.showDisk });
+  utils.drawSpectrogram(canvas_fft, spectrogram,
+    { x2_mul, rgb_fn, num_freqs, disk: config.showDisk, fs_full: !config.showHalf });
   drawSpectrumColors(canvas_fft);
+  if (!config.showHalf)
+    utils.shiftCanvasData(canvas_fft, { dy: canvas_fft.height / 2 });
   resetCanvasTransform();
   selectArea(null);
   drawPointTag(0, 0);
@@ -456,12 +475,16 @@ function drawVolumeTimeline() {
   ctx.putImageData(img, 0, 0);
 }
 
+function hidePointTag() {
+  div_point.style.visibility = 'hidden';
+  div_hztag.style.visibility = 'hidden';
+}
+
 function drawPointTag(x0, y0) {
   if (!audio_signal) return;
 
   if (!x0 && !y0) {
-    div_point.style.visibility = 'hidden';
-    div_hztag.style.visibility = 'hidden';
+    hidePointTag();
     return;
   }
 
@@ -469,7 +492,7 @@ function drawPointTag(x0, y0) {
   let duration = config.timeMax - config.timeMin;
   let t = x0 * duration;
   let f = (1 - y0) * sr / 2;
-  let sec = t.toFixed(2) + 's';
+  let sec = utils.hhmmss(t).replace(/^00:/, '') + 's';
   let hz = f.toFixed(0) + ' Hz';
   let text = hz + ' ' + sec;
 
@@ -550,6 +573,8 @@ async function playSelectedArea() {
     return;
   }
 
+  hidePointTag();
+
   if (!selected_area) {
     await playSound();
     return;
@@ -591,6 +616,7 @@ async function extractSelectedSound() {
     wave[i] /= max(1e-6, amp_max);
 
   selected_area.wave = wave;
+  await utils.hideStatus();
 }
 
 async function eraseSelectedArea() {
