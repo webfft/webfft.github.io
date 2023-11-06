@@ -13,7 +13,8 @@ export const sqr = (x) => x * x;
 export const clamp = (x, min = 0, max = 1) => Math.max(Math.min(x, max), min);
 export const hann = (x) => x > 0 && x < 1 ? sqr(Math.sin(Math.PI * x)) : 0;
 export const hann_ab = (x, a, b) => hann((x - a) / (b - a));
-export const lanczos = (x, p) => x == 0 ? 1 : sin(PI * x) * sin(PI * x / p) / (PI * PI * x * x) * p;
+export const sinc = (x) => Math.abs(x) < 1e-6 ? 1.0 : sin(x) / x;
+export const lanczos = (x, p) => sinc(PI * x) * sinc(PI * x / p);
 export const lanczos_ab = (x, p, a, b) => lanczos((x - a) / (b - a) * 2 - 1, p);
 export const fract = (x) => x - Math.floor(x);
 export const reim2 = (re, im) => re * re + im * im;
@@ -627,7 +628,7 @@ export function readAudioFrame(signal, frame,
   frame.fill(0);
 
   for (let i = 0; i < len0; i++) {
-    let h = use_winf ? lanczos_ab(i / frame_width, 1, 0, 1) : 1.0;
+    let h = use_winf ? hann(i / frame_width) : 1.0;
     let k = base + t_step * i | 0;
     let s = k < signal.length ? signal[k] : 0;
     frame[i] = h * s;
@@ -1080,7 +1081,7 @@ function initStatusBar() {
 
   status = document.createElement('div');
   status.id = id;
-  status.style.background = '#448';
+  status.style.background = '#112';
   status.style.color = '#fff';
   status.style.padding = '0.25em';
   status.style.display = 'none';

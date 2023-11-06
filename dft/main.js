@@ -32,6 +32,7 @@ config.timeMax = 0; // sec
 config.showHalf = true;
 config.showPhase = false;
 config.showDisk = false;
+config.normAmp = true;
 
 let minSampleRate = 500;
 let maxSampleRate = 48000;
@@ -85,7 +86,7 @@ function initDebugGUI() {
   gui.add(config, 'numFreqs', 256, 2048, 256);
   gui.add(config, 'showHalf');
   gui.add(config, 'showPhase');
-  // gui.add(config, 'showDisk');
+  gui.add(config, 'normAmp');
   config.confirm = processUpdatedConfig;
   config.help = () => { };
   gui.add(config, 'confirm');
@@ -442,7 +443,7 @@ function drawAvgSpectrum() {
     for (let x = 0; x < cw; x++) {
       let f = (ch - 1 - y) / ch * avg_spectrum.length / 2 | 0;
       let a = Math.abs((x + 0.5) / cw * 2 - 1);
-      let a_max = x2_mul(avg_spectrum[f] / abs_max);
+      let a_max = avg_spectrum[f] / abs_max;
       if (a > a_max) continue;
       let [r, g, b] = rgb_fn(a_max);
       let i = (y * cw + x) * 4;
@@ -624,9 +625,11 @@ async function extractSelectedSound() {
   let wave = filterSelectedSound(
     (f, f_min, f_max) => f >= f_min && f <= f_max ? 1 : 0);
 
-  // let amp_max = wave.reduce((s, x) => max(s, abs(x)), 0);
-  // for (let i = 0; i < wave.length; i++)
-  //   wave[i] /= max(1e-6, amp_max);
+  if (config.normAmp) {
+    let amp_max = wave.reduce((s, x) => max(s, abs(x)), 0);
+    for (let i = 0; i < wave.length; i++)
+      wave[i] /= max(1e-6, amp_max);
+  }
 
   selected_area.wave = wave;
   await utils.hideStatus();
