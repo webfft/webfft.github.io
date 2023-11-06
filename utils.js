@@ -351,7 +351,7 @@ export async function drawSpectrogram(canvas, spectrogram, {
 
   let h = canvas.height;
   let w = canvas.width;
-  let ctx = canvas.getContext('2d');
+  let ctx = canvas.getContext('2d', { willReadFrequently: true });
   let img = ctx.getImageData(0, 0, w, h);
   sqrabs_max = sqrabs_max || getSpectrogramMax(spectrogram, reim_fn);
   let amp_fn = (re, im) => x2_mul(reim_fn(re, im) / sqrabs_max);
@@ -1035,7 +1035,7 @@ async function computeSpectrogramAsync(worker_id, signal, config) {
 }
 
 export function shiftCanvasData(canvas, { dx = 0, dy = 0 }) {
-  let ctx = canvas.getContext('2d');
+  let ctx = canvas.getContext('2d', { willReadFrequently: true });
   let img = ctx.getImageData(0, 0, canvas.width, canvas.height);
   ctx.putImageData(img, -dx, -dy);
   ctx.putImageData(img, +dx, +dy);
@@ -1224,7 +1224,7 @@ class IndexedDBTable {
 export function setPixels(canvas, rgba_fn) {
   let w = canvas.width;
   let h = canvas.height;
-  let ctx = canvas.getContext('2d');
+  let ctx = canvas.getContext('2d', { willReadFrequently: true });
   let img = ctx.getImageData(0, 0, w, h);
 
   for (let y = 0; y < h; y++) {

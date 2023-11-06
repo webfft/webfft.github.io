@@ -431,7 +431,7 @@ function drawAvgSpectrum() {
   let canvas = canvas_spectrum;
   let cw = canvas.width;
   let ch = canvas.height;
-  let ctx = canvas.getContext('2d');
+  let ctx = canvas.getContext('2d', { willReadFrequently: true });
   let img = ctx.getImageData(0, 0, cw, ch);
   let avg_spectrum = utils.getAvgSpectrum(sub_spectrogram || spectrogram);
   let abs_max = avg_spectrum.reduce((s, x) => max(s, x), 0);
@@ -461,7 +461,7 @@ function drawVolumeTimeline() {
   let canvas = canvas_timeline;
   let cw = canvas.width;
   let ch = canvas.height;
-  let ctx = canvas.getContext('2d');
+  let ctx = canvas.getContext('2d', { willReadFrequently: true });
   let img = ctx.getImageData(0, 0, cw, ch);
   let vol_timeline = utils.getVolumeTimeline(sub_spectrogram || spectrogram);
   let vol_max = vol_timeline.reduce((s, x) => max(s, x), 0);
@@ -654,10 +654,10 @@ async function saveSelectedArea() {
   }
 
   await showStatus('Generating a .wav file');
-  let blob = utils.generateWavBlob(wave, config.sampleRate);
+  let file = utils.generateWavFile(wave, config.sampleRate);
   let a = document.createElement('a');
-  a.download = blob.size + '.wav';
-  a.href = URL.createObjectURL(blob);
+  a.download = file.size + '.wav';
+  a.href = URL.createObjectURL(file);
   a.click();
   await showStatus('');
 }
