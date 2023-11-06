@@ -18,7 +18,7 @@ export const lanczos_ab = (x, p, a, b) => lanczos((x - a) / (b - a) * 2 - 1, p);
 export const fract = (x) => x - Math.floor(x);
 export const reim2 = (re, im) => re * re + im * im;
 export const is_pow2 = (x) => (x & (x - 1)) == 0;
-export const hhmmss = (sec) => new Date(sec*1000).toISOString().slice(11, -1);
+export const hhmmss = (sec) => new Date(sec * 1000).toISOString().slice(11, -1);
 export const dcheck = (x) => { if (x) return; debugger; throw new Error('dcheck failed'); }
 
 export function $$$(tag_name, attrs = {}, content = []) {
@@ -1341,6 +1341,30 @@ export async function ctcheck(ctoken) {
   if (ctoken.cancelled)
     throw new Error('Cancelled');
   ctoken.time = Date.now();
+}
+
+export function resampleSignal(src, res, p = 2) {
+  let n = src.length, m = res.length;
+  if (n == m) {
+    res.set(src, 0);
+    return;
+  }
+
+  for (let j = 0; j < m; j++) {
+    let t = (j + 0.5) / m * n - 0.5;
+    let i = Math.round(t);
+    dcheck(i >= 0 && i <= n - 1);
+    if (i == t) {
+      res[j] = src[i];
+      continue;
+    }
+
+    let sum = 0.0;
+    for (let k = -p; k <= p; k++)
+      if (i + k >= 0 && i + k < n)
+        sum += src[i + k] * lanczos(k + i - t, p);
+    res[j] = sum;
+  }
 }
 
 async function reverseDiskMapping(src, res, { fs_full = false, r_zoom = 1, num_reps = 1, ctoken }) {

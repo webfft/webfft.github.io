@@ -7,7 +7,10 @@ body {
   background: #000;
 }
 
-#spectrogram, #mover, #overlay, #sarea_buttons {
+#spectrogram,
+#mover,
+#overlay,
+#sarea_buttons {
   left: 5%;
   top: 0;
   width: 95%;
@@ -21,14 +24,21 @@ body {
   position: relative;
 }
 
-#sarea, #vline {
+#sarea,
+#vline {
   position: absolute;
   left: 0;
   top: 0;
   right: 0;
   bottom: 0;
-  outline: 2px solid #080;
+  border: 2px solid #080;
   visibility: hidden;
+}
+
+#vline {
+  border-left: 0;
+  border-top: 0;
+  border-bottom: 0;
 }
 
 #sarea_buttons button {
@@ -48,7 +58,8 @@ body {
   display: flex;
 }
 
-#point, #hztag {
+#point,
+#hztag {
   position: absolute;
   visibility: hidden;
 }
@@ -62,7 +73,7 @@ body {
 #hztag {
   background: #000;
   color: #0f0;
-  outline: 2px solid #0f0;
+  /* outline: 2px solid #0f0; */
   padding: 0.5em;
   font-size: 0.4em;
   white-space: nowrap;

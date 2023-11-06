@@ -19,7 +19,7 @@ let canvas_timeline = $('#timeline');
 let actions = [];
 let timer = 0;
 let config = {}, prev_config = {};
-let defaultSampleRate = 24000;
+let defaultSampleRate = 48000;
 config.sampleRate = defaultSampleRate; // should match the audio sample rate
 config.frameSize = 1024; // FFT size
 config.frameWidth = 1024; // <= frameSize, usually it's 20-200 ms worth of samples
@@ -33,10 +33,13 @@ config.showHalf = true;
 config.showPhase = false;
 config.showDisk = false;
 
-let minSampleRate = 4000;
-let maxSampleRate = 96000;
+let minSampleRate = 500;
+let maxSampleRate = 48000;
 let audio_file = null;
 let audio_signal = null;
+let original_signal = null;
+let original_sample_rate = null;
+let point_tag = null;
 let spectrogram = null;
 let sub_spectrogram = null;
 let selected_area = null;
@@ -48,6 +51,8 @@ let x2_mul = (a2) => a2 ** (0.5 / config.dbRange); // 0.001..1 -> 0.1..1
 let rgb_fn = (db) => [db * 9.0, db * 3.0, db * 1.0];
 let pct100 = (x) => (x * 100).toFixed(2) + '%';
 
+window.config = config;
+window.utils = utils; // DEBUG
 window.onload = init;
 window.onerror = (event, source, lineno, colno, error) => showStatus(error);
 window.onunhandledrejection = (event) => showStatus(event.reason, { 'Hide': utils.hideStatus });
@@ -73,14 +78,14 @@ function init() {
 function initDebugGUI() {
   gui.close();
   gui.add(config, 'dbRange', 0.25, 5, 0.25);
-  gui.add(config, 'sampleRate', 4000, 48000, 4000);
+  gui.add(config, 'sampleRate', minSampleRate, maxSampleRate, minSampleRate);
   gui.add(config, 'frameSize', 256, 8192, 256);
   gui.add(config, 'frameWidth', 256, 4096, 256);
   gui.add(config, 'numFrames', 256, 4096, 256);
   gui.add(config, 'numFreqs', 256, 2048, 256);
   gui.add(config, 'showHalf');
   gui.add(config, 'showPhase');
-  gui.add(config, 'showDisk');
+  // gui.add(config, 'showDisk');
   config.confirm = processUpdatedConfig;
   config.help = () => { };
   gui.add(config, 'confirm');
@@ -117,30 +122,24 @@ function processUpdatedConfig() {
   config.timeMin = (config.timeMin * 100 | 0) / 100;
   config.timeMax = (config.timeMax * 100 | 0) / 100;
 
-  const DRAW = 1, COMP = 2, DECODE = 3;
-  const prop_levels = {
-    frameSize: COMP,
-    frameWidth: COMP,
-    numFreqs: COMP,
-    numFrames: COMP,
-    timeMin: COMP,
-    timeMax: COMP,
-    showPhase: COMP,
-    sampleRate: DECODE,
-  };
+  const spec_props = new Set([
+    'frameSize', 'frameWidth', 'numFreqs', 'numFrames',
+    'timeMin', 'timeMax', 'showPhase', 'sampleRate']);
 
-  let max_level = 0;
+  let has_changes = false;
+  let needs_recomp = false;
+
   for (let p in config) {
-    let level = prop_levels[p] || DRAW;
-    if (config[p] != prev_config[p])
-      max_level = Math.max(max_level, level);
+    if (config[p] != prev_config[p]) {
+      has_changes = true;
+      if (spec_props.has(p))
+        needs_recomp = true;
+    }
   }
 
-  if (max_level == DECODE)
-    schedule(decodeAudioFile);
-  else if (max_level == COMP)
+  if (needs_recomp)
     schedule(computeSpectrogram);
-  else if (max_level == DRAW)
+  else if (has_changes)
     schedule(drawSpectrogram);
 
   prev_config = JSON.parse(JSON.stringify(config));
@@ -175,15 +174,26 @@ async function openSample(file_url = 'ogg/lapwing.mp3') {
   await decodeAudioFile();
 }
 
+async function resampleSignal() {
+  dcheck(original_signal);
+  let len = Math.floor(original_signal.length * config.sampleRate / original_sample_rate);
+  if (audio_signal?.length == len) return;
+  await showStatus('Resampling signal');
+  audio_signal = new Float32Array(len);
+  utils.resampleSignal(original_signal, audio_signal);
+  await utils.hideStatus();
+}
+
 async function decodeAudioFile() {
   if (!audio_file) return;
   initMinMaxSampleRate();
   let sr = config.sampleRate;
   let size_kb = (audio_file.size / 1024).toFixed(0);
   await showStatus(['Decoding audio:', size_kb, 'KB @', sr, 'Hz']);
-  audio_signal = await utils.decodeAudioFile(audio_file, sr);
+  original_signal = await utils.decodeAudioFile(audio_file, sr);
+  original_sample_rate = sr;
   if (!config.timeMin && !config.timeMax)
-    config.timeMax = audio_signal.length / sr;
+    config.timeMax = original_signal.length / sr;
   await computeSpectrogram();
   $('#buttons').style.display = '';
 }
@@ -344,6 +354,7 @@ async function computeSpectrogram() {
   let time_min = config.timeMin.toFixed(2);
   let time_max = config.timeMax.toFixed(2);
   let time_span = time_min + '..' + time_max;
+  await resampleSignal();
   await showStatus(['Computing DFT:', time_span, 'sec @', num_frames, 'x', frame_size]);
   let audio_window = getAudioWindow();
   spectrogram = await utils.computePaddedSpectrogram(audio_window, { num_frames, frame_size, frame_width });
@@ -476,6 +487,7 @@ function drawVolumeTimeline() {
 }
 
 function hidePointTag() {
+  point_tag = null;
   div_point.style.visibility = 'hidden';
   div_hztag.style.visibility = 'hidden';
 }
@@ -495,6 +507,8 @@ function drawPointTag(x0, y0) {
   let sec = utils.hhmmss(t).replace(/^00:/, '') + 's';
   let hz = f.toFixed(0) + ' Hz';
   let text = hz + ' ' + sec;
+
+  point_tag = { t, f };
 
   div_point.style.visibility = 'visible';
   div_point.style.left = pct100(x0);
@@ -573,13 +587,12 @@ async function playSelectedArea() {
     return;
   }
 
-  hidePointTag();
-
   if (!selected_area) {
     await playSound();
     return;
   }
 
+  hidePointTag();
   await extractSelectedSound();
   await playSound(selected_area.wave);
 }
@@ -611,9 +624,9 @@ async function extractSelectedSound() {
   let wave = filterSelectedSound(
     (f, f_min, f_max) => f >= f_min && f <= f_max ? 1 : 0);
 
-  let amp_max = wave.reduce((s, x) => max(s, abs(x)), 0);
-  for (let i = 0; i < wave.length; i++)
-    wave[i] /= max(1e-6, amp_max);
+  // let amp_max = wave.reduce((s, x) => max(s, abs(x)), 0);
+  // for (let i = 0; i < wave.length; i++)
+  //   wave[i] /= max(1e-6, amp_max);
 
   selected_area.wave = wave;
   await utils.hideStatus();
@@ -652,6 +665,7 @@ async function saveSelectedArea() {
 async function playSound(signal = getAudioWindow()) {
   let sr = config.sampleRate;
   let duration = signal.length / sr;
+  let start_at = selected_area ? 0.0 : (point_tag?.t || 0.0);
   await showStatus(['Playing sound:', duration.toFixed(2), 'sec'], { 'Stop': stopSound });
   let ctx = new AudioContext({ sampleRate: sr });
 
@@ -662,8 +676,8 @@ async function playSound(signal = getAudioWindow()) {
     src.buffer = buffer;
     src.connect(ctx.destination);
     playing_sound = { ctx, src };
-    drawPlaybackProgress();
-    src.start();
+    drawPlaybackProgress(start_at);
+    src.start(0.0, start_at);
     await new Promise((resolve) => src.onended = resolve);
     console.debug('Sound playback ended');
   } finally {
@@ -673,7 +687,7 @@ async function playSound(signal = getAudioWindow()) {
   }
 }
 
-function drawPlaybackProgress() {
+function drawPlaybackProgress(start_at = 0.0) {
   if (!playing_sound)
     return;
 
@@ -689,7 +703,7 @@ function drawPlaybackProgress() {
       console.debug('Stopped playback timer');
       return;
     }
-    let dt = ctx.currentTime - time0;
+    let dt = ctx.currentTime - time0 + start_at;
     drawSelectedArea(selected_area, dt / duration);
   }, 15);
 }
