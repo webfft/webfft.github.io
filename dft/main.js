@@ -36,6 +36,7 @@ config.normAmp = true;
 
 let minSampleRate = 500;
 let maxSampleRate = 48000;
+
 let audio_file = null;
 let audio_signal = null;
 let original_signal = null;
@@ -47,6 +48,7 @@ let selected_area = null;
 let playing_sound = null;
 let mic_stream = null;
 let prev_audio_window = null;
+
 // let x2_mul = (s) => clamp(log10(s) / config.dbRange + 1); // 0.001..1 -> -3..0 -> 0..1
 let x2_mul = (a2) => a2 ** (0.5 / config.dbRange); // 0.001..1 -> 0.1..1
 let rgb_fn = (db) => [db * 9.0, db * 3.0, db * 1.0];
@@ -59,6 +61,7 @@ window.onerror = (event, source, lineno, colno, error) => showStatus(error);
 window.onunhandledrejection = (event) => showStatus(event.reason, { 'Hide': utils.hideStatus });
 
 function init() {
+  $('#open').onclick = () => schedule(openFile);
   $('#play').onclick = () => schedule(playSelectedArea);
   $('#save').onclick = () => schedule(saveSelectedArea);
   $('#erase').onclick = () => schedule(eraseSelectedArea);
@@ -79,7 +82,7 @@ function init() {
 function initDebugGUI() {
   gui.close();
   gui.add(config, 'dbRange', 0.25, 5, 0.25);
-  gui.add(config, 'sampleRate', minSampleRate, maxSampleRate, minSampleRate);
+  gui.add(config, 'sampleRate', 100, 96000, 100);
   gui.add(config, 'frameSize', 256, 8192, 256);
   gui.add(config, 'frameWidth', 256, 4096, 256);
   gui.add(config, 'numFrames', 256, 4096, 256);
@@ -119,7 +122,7 @@ async function perform() {
 
 function processUpdatedConfig() {
   config.frameSize = 2 ** (log2(config.frameSize) | 0);
-  config.sampleRate = clamp((config.sampleRate / 1000 | 0) * 1000, minSampleRate, maxSampleRate);
+  config.sampleRate = clamp((config.sampleRate / 100 | 0) * 100, 100, 96000);
   config.timeMin = (config.timeMin * 100 | 0) / 100;
   config.timeMax = (config.timeMax * 100 | 0) / 100;
 
@@ -162,6 +165,7 @@ async function openFile() {
   audio_file = file;
   config.timeMin = 0;
   config.timeMax = 0;
+  config.sampleRate = 48000;
   await decodeAudioFile();
   prev_config = JSON.parse(JSON.stringify(config));
 }
@@ -175,7 +179,7 @@ async function openSample(file_url = 'ogg/lapwing.mp3') {
   await decodeAudioFile();
 }
 
-async function resampleSignal() {
+async function resampleAudio() {
   dcheck(original_signal);
   let len = Math.floor(original_signal.length * config.sampleRate / original_sample_rate);
   if (audio_signal?.length == len) return;
@@ -188,11 +192,14 @@ async function resampleSignal() {
 async function decodeAudioFile() {
   if (!audio_file) return;
   initMinMaxSampleRate();
+  if (config.sampleRate < minSampleRate)
+    config.sampleRate = minSampleRate;
   let sr = config.sampleRate;
   let size_kb = (audio_file.size / 1024).toFixed(0);
   await showStatus(['Decoding audio:', size_kb, 'KB @', sr, 'Hz']);
   original_signal = await utils.decodeAudioFile(audio_file, sr);
   original_sample_rate = sr;
+  audio_signal = original_signal;
   if (!config.timeMin && !config.timeMax)
     config.timeMax = original_signal.length / sr;
   await computeSpectrogram();
@@ -355,7 +362,7 @@ async function computeSpectrogram() {
   let time_min = config.timeMin.toFixed(2);
   let time_max = config.timeMax.toFixed(2);
   let time_span = time_min + '..' + time_max;
-  await resampleSignal();
+  await resampleAudio();
   await showStatus(['Computing DFT:', time_span, 'sec @', num_frames, 'x', frame_size]);
   let audio_window = getAudioWindow();
   spectrogram = await utils.computePaddedSpectrogram(audio_window, { num_frames, frame_size, frame_width });
@@ -502,9 +509,8 @@ function drawPointTag(x0, y0) {
   }
 
   let sr = config.sampleRate;
-  let duration = config.timeMax - config.timeMin;
-  let t = x0 * duration;
-  let f = (1 - y0) * sr / 2;
+  let t = mix(config.timeMin, config.timeMax, x0);
+  let f = mix(0, config.sampleRate / 2, 1 - y0);
   let sec = utils.hhmmss(t).replace(/^00:/, '') + 's';
   let hz = f.toFixed(0) + ' Hz';
   let text = hz + ' ' + sec;
@@ -665,8 +671,17 @@ async function saveSelectedArea() {
   await showStatus('');
 }
 
-async function playSound(signal = getAudioWindow()) {
-  let sr = config.sampleRate;
+async function playSound(signal = getAudioWindow(), sr = config.sampleRate) {
+  // AudioContext may have a very high sample rate floor, such as 8 kHz.
+  if (sr < minSampleRate) {
+    await showStatus('Upsampling from ' + sr + ' Hz to ' + minSampleRate + ' Hz');
+    let upsampled = new Float32Array(signal.length * minSampleRate / sr);
+    let degree = Math.ceil(Math.max(2, upsampled.length / signal.length));
+    utils.resampleSignal(signal, upsampled, degree);
+    signal = upsampled;
+    sr = minSampleRate;
+  }
+
   let duration = signal.length / sr;
   let start_at = selected_area ? 0.0 : (point_tag?.t || 0.0);
   await showStatus(['Playing sound:', duration.toFixed(2), 'sec'], { 'Stop': stopSound });
@@ -944,7 +959,6 @@ function findMinMaxSampleRate() {
 }
 
 function initMinMaxSampleRate() {
-  if (maxSampleRate) return;
   [minSampleRate, maxSampleRate] = findMinMaxSampleRate();
   console.info('Supported sample rates:', minSampleRate + '..' + maxSampleRate, 'Hz');
 }
