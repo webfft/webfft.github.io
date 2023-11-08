@@ -26,7 +26,7 @@ config.frameWidth = 1024; // <= frameSize, usually it's 20-200 ms worth of sampl
 config.numFrames = 1024; // canvas width
 config.numFreqs = 1024; // canvas height <= frameSize/2
 config.dbRange = 1.0; // log10(re^2+im^2)
-config.audioKbps = 128;
+config.ampPctile = 1.0;
 config.timeMin = 0; // sec
 config.timeMax = 0; // sec
 config.showHalf = true;
@@ -82,14 +82,16 @@ function init() {
 function initDebugGUI() {
   gui.close();
   gui.add(config, 'dbRange', 0.25, 5, 0.25);
+  gui.add(config, 'ampPctile', 0, 1, 0.0001);
   gui.add(config, 'sampleRate', 100, 96000, 100);
   gui.add(config, 'frameSize', 256, 8192, 256);
   gui.add(config, 'frameWidth', 256, 4096, 256);
   gui.add(config, 'numFrames', 256, 4096, 256);
   gui.add(config, 'numFreqs', 256, 2048, 256);
-  gui.add(config, 'showHalf');
-  gui.add(config, 'showPhase');
+  // gui.add(config, 'showHalf');
+  // gui.add(config, 'showPhase');
   gui.add(config, 'normAmp');
+
   config.confirm = processUpdatedConfig;
   config.help = () => { };
   gui.add(config, 'confirm');
@@ -166,6 +168,7 @@ async function openFile() {
   config.timeMin = 0;
   config.timeMax = 0;
   config.sampleRate = 48000;
+  gui.updateDisplay();
   await decodeAudioFile();
   prev_config = JSON.parse(JSON.stringify(config));
 }
@@ -243,29 +246,6 @@ function stopRecording() {
   console.info('Releasing mic'); // this will stop the recorder
   mic_stream.getTracks().map((t) => t.stop());
   mic_stream = null;
-}
-
-// Deprecated in favor of recordAudioPCM.
-async function recordAudioMR() {
-  mic_stream = await getMicStream();
-
-  await showStatus('Initializing MediaRecorder');
-  let recorder = new MediaRecorder(mic_stream, {
-    mimeType: 'audio/webm;codecs=opus',
-    audioBitsPerSecond: config.audioKbps * 1000 | 0,
-  });
-
-  let chunks = [];
-  recorder.ondataavailable = async (e) => {
-    chunks.push(e.data);
-    audio_file = new Blob(chunks, { type: recorder.mimeType });
-    config.timeMin = 0;
-    config.timeMax = 0;
-    await decodeAudioFile();
-  };
-
-  await showStatus('Recording...', { 'Stop': stopRecording });
-  recorder.start();
 }
 
 function getAudioWindow() {
@@ -387,11 +367,12 @@ async function computeSpectrogram() {
 
 function drawSpectrogram() {
   let num_freqs = config.numFreqs;
+  let amp_pctile = config.ampPctile;
   canvas_fft.width = config.showDisk ? num_freqs : config.numFrames;
   canvas_fft.height = config.numFreqs;
   utils.drawSpectrogram(canvas_fft, spectrogram,
-    { x2_mul, rgb_fn, num_freqs, disk: config.showDisk, fs_full: !config.showHalf });
-  drawSpectrumColors(canvas_fft);
+    { x2_mul, rgb_fn, amp_pctile, num_freqs, disk: config.showDisk, fs_full: !config.showHalf });
+  // drawSpectrumColors(canvas_fft);
   if (!config.showHalf)
     utils.shiftCanvasData(canvas_fft, { dy: canvas_fft.height / 2 });
   resetCanvasTransform();

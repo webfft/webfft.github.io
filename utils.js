@@ -347,14 +347,14 @@ export function applyBandpassFilter(signal, filter_fn) {
 }
 
 export async function drawSpectrogram(canvas, spectrogram, {
-  x2_mul = s => s, rgb_fn = s => [s * 9, s * 3, s * 1], sqrabs_max = 0, ctoken, num_reps = 2, r_zoom = 1,
-  reim_fn = reim2, disk = false, highq = false, fs_full = false, clear = true, num_freqs = 0 } = {}) {
+  x2_mul = s => s, rgb_fn = s => [s * 9, s * 3, s * 1], sqrabs_max = 0, amp_pctile = 1.0, ctoken, num_reps = 2,
+  r_zoom = 1, reim_fn = reim2, disk = false, highq = false, fs_full = false, clear = true, num_freqs = 0 } = {}) {
 
   let h = canvas.height;
   let w = canvas.width;
   let ctx = canvas.getContext('2d', { willReadFrequently: true });
   let img = ctx.getImageData(0, 0, w, h);
-  sqrabs_max = sqrabs_max || getSpectrogramMax(spectrogram, reim_fn);
+  sqrabs_max = sqrabs_max || getSpectrogramMax(spectrogram, reim_fn, amp_pctile);
   let amp_fn = (re, im) => x2_mul(reim_fn(re, im) / sqrabs_max);
   let rgb_reim = (re, im) => rgb_fn(amp_fn(re, im));
   let [num_frames, frame_size] = spectrogram.dims;
@@ -452,8 +452,27 @@ export function getMaskedSpectrogram(spectrogram1, mask_fn) {
   return spectrogram2;
 }
 
-export function getSpectrogramMax(sg, fn = reim2) {
-  return getFrameMax(sg.array, fn);
+export function getSpectrogramMax(sg, reim_fn = reim2, amp_pctile = 1.0) {
+  let amp_max = getFrameMax(sg.array, reim_fn);
+
+  if (amp_pctile < 1.0) {
+    let buckets = new Int32Array(1e6);
+
+    aggFrameData(sg.array, reim_fn, (sum, amp) => {
+      let i = amp / amp_max * (buckets.length - 1) | 0;
+      buckets[i]++;
+      return 0;
+    });
+
+    // sum buckets[0..count] = total * amp_pctile
+    let total = sg.array.length / 2;
+    let index = 0, count = 0;
+    while (count / total < amp_pctile && index < total)
+      count += buckets[index++];
+    amp_max *= index / total;
+  }
+
+  return amp_max;
 }
 
 export function getFrameMax(data, reim_fn = reim2) {
