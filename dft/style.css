@@ -146,25 +146,32 @@ canvas#timespan {
 }
 
 button {
-  color: #080;
-  background: #000;
-  border: 1px solid #0f0;
-  width: 2em;
-  height: 2em;
-  border-width: 2px;
+  color: #fff;
+  background: #002;
+  border: none;
+  width: 1.5em;
+  height: 1.5em;
   cursor: pointer;
   user-select: none;
 }
 
 button:hover {
-  border-color: #0f0;
-  color: #0f0;
+  background: #006;
+}
+
+button[disabled] {
+  background: #222;
+}
+
+button span:first-child {
+  font-size: 0.75em;
+  color: #fff;
 }
 
 button span:last-child {
   display: block;
-  font-size: 0.3em;
-  color: #0f0;
+  font-size: 0.25em;
+  color: #fff;
 }
 
 button:focus {
@@ -172,12 +179,11 @@ button:focus {
 }
 
 button.selected {
-  border-color: #0f0;
-  color: #0f0;
+  background: #008;
 }
 
 button.disabled {
-  background: #888;
+  background: #222;
 }
 
 html>body>.dg.ac {
