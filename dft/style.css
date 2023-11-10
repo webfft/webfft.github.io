@@ -11,10 +11,10 @@ body {
 #mover,
 #overlay,
 #sarea_buttons {
-  left: 5%;
-  top: 0;
-  width: 95%;
-  height: 95%;
+  left: 3%;
+  top: 3%;
+  width: 97%;
+  height: 97%;
   position: fixed;
   background: transparent;
 }
@@ -85,40 +85,28 @@ body {
 
 canvas#ampdensity {
   display: none;
-  left: 0;
-  top: 0;
-  width: 5%;
-  height: 95%;
-  position: fixed;
-  background: #000;
 }
 
 canvas#spectrum {
   left: 0;
-  top: 0;
-  width: 5%;
-  height: 95%;
+  top: 3%;
+  width: 3%;
+  height: 97%;
   position: fixed;
   background: #000;
 }
 
 canvas#timeline {
-  left: 5%;
-  bottom: 0;
-  width: 95%;
-  height: 5%;
+  left: 3%;
+  top: 0;
+  width: 97%;
+  height: 3%;
   position: fixed;
   background: #000;
 }
 
 canvas#timespan {
   display: none;
-  left: 5%;
-  bottom: 0;
-  width: 95%;
-  height: 5%;
-  position: fixed;
-  background: #000;
 }
 
 #buttons {
