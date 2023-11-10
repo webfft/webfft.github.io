@@ -124,25 +124,16 @@ canvas#timespan {
 #buttons {
   z-index: 5;
   position: fixed;
-  left: 5%;
   top: 0;
   padding: 0.1em;
   display: flex;
+  flex-direction: column;
+  right: 0;
   gap: 0.25em;
 }
 
 #buttons button {
   font-size: xxx-large;
-}
-
-@media (orientation: landscape) {
-  #buttons button {
-    font-size: xx-large;
-  }
-
-  body {
-    font-size: xx-large;
-  }
 }
 
 button {
@@ -188,5 +179,18 @@ button.disabled {
 
 html>body>.dg.ac {
   z-index: 4;
-  _transform: scale(2) translate(-25%);
+}
+
+html>body>.dg.ac>.dg.main {
+  float: left;
+}
+
+@media (orientation: landscape) {
+  #buttons button {
+    font-size: xx-large;
+  }
+
+  body {
+    font-size: xx-large;
+  }
 }
