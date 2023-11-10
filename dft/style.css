@@ -109,6 +109,18 @@ canvas#timespan {
   display: none;
 }
 
+#infobar {
+  position: fixed;
+  display: inline-block;
+  bottom: 0;
+  right: 0;
+  height: 1em;
+  padding: 1em;
+  color: #fff;
+  text-align: right;
+  font-size: 7pt;
+}
+
 #buttons {
   z-index: 5;
   position: fixed;

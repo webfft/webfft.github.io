@@ -19,7 +19,11 @@ let canvas_timeline = $('#timeline');
 let actions = [];
 let timer = 0;
 let config = {}, prev_config = {};
+
 let defaultSampleRate = 48000;
+let minSampleRate = 500;
+let maxSampleRate = 48000;
+
 config.sampleRate = defaultSampleRate; // should match the audio sample rate
 config.frameSize = 1024; // FFT size
 config.frameWidth = 1024; // <= frameSize, usually it's 20-200 ms worth of samples
@@ -33,9 +37,6 @@ config.showHalf = true;
 config.showPhase = false;
 config.showDisk = false;
 config.normAmp = true;
-
-let minSampleRate = 500;
-let maxSampleRate = 48000;
 
 let audio_file = null;
 let audio_signal = null;
@@ -160,6 +161,10 @@ async function resetView() {
   processUpdatedConfig();
 }
 
+function setInfoBarText(text) {
+  $('#infobar').textContent = text;
+}
+
 async function openFile() {
   let file = await utils.selectAudioFile();
   if (!file) return;
@@ -167,10 +172,11 @@ async function openFile() {
   audio_file = file;
   config.timeMin = 0;
   config.timeMax = 0;
-  config.sampleRate = 48000;
-  gui.updateDisplay();
   await decodeAudioFile();
+  setInfoBarText(file.name + ' ' + (file.size / 2 ** 20).toFixed(1) + ' MB ' +
+    utils.hhmmss(audio_signal.length / config.sampleRate) + 's');
   prev_config = JSON.parse(JSON.stringify(config));
+  gui.updateDisplay();
 }
 
 async function openSample(file_url = 'ogg/lapwing.mp3') {
@@ -194,11 +200,9 @@ async function resampleAudio() {
 
 async function decodeAudioFile() {
   if (!audio_file) return;
-  initMinMaxSampleRate();
-  if (config.sampleRate < minSampleRate)
-    config.sampleRate = minSampleRate;
-  let sr = config.sampleRate;
+  let sr = defaultSampleRate;
   let size_kb = (audio_file.size / 1024).toFixed(0);
+  initMinMaxSampleRate();
   await showStatus(['Decoding audio:', size_kb, 'KB @', sr, 'Hz']);
   original_signal = await utils.decodeAudioFile(audio_file, sr);
   original_sample_rate = sr;
@@ -665,6 +669,7 @@ async function playSound(signal = getAudioWindow(), sr = config.sampleRate) {
 
   let duration = signal.length / sr;
   let start_at = selected_area ? 0.0 : (point_tag?.t || 0.0);
+  start_at -= config.timeMin;
   await showStatus(['Playing sound:', duration.toFixed(2), 'sec'], { 'Stop': stopSound });
   let ctx = new AudioContext({ sampleRate: sr });
 

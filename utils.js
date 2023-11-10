@@ -1371,7 +1371,7 @@ export function resampleSignal(src, res, p = 2) {
   }
 
   for (let j = 0; j < m; j++) {
-    let t = (j + 0.5) / m * n - 0.5;
+    let t = j / m * n;
     let i = Math.round(t);
     dcheck(i >= 0 && i <= n - 1);
     if (i == t) {
