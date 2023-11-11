@@ -73,6 +73,7 @@ function init() {
   $('#reset').onclick = () => stopCurrentAction();
   toggleGridMode();
   initMouseHandlers();
+  initKeyBoardHandlers();
   initBgThread();
   initDebugGUI();
   let file_url = url_sp.get('a');
@@ -104,6 +105,23 @@ function initDebugGUI() {
   li.querySelector('.c').remove();
   let href = 'https://github.com/webfft/webfft.github.io/tree/master/dft#settings';
   li.querySelector('.property-name').innerHTML = `<a style="color:inherit" href="${href}">help</a>`;
+}
+
+function initKeyBoardHandlers() {
+  document.onkeydown = (event) => {
+    console.log('keydown:', event.key);
+    switch (event.key) {
+      case '+':
+      case '=':
+        config.dbRange += 0.25;
+        processUpdatedConfig();
+        break;
+      case '-':
+        config.dbRange -= 0.25;
+        processUpdatedConfig();
+        break;
+    };
+  };
 }
 
 function initBgThread() {
@@ -702,8 +720,7 @@ async function playSound(signal = getAudioWindow(), sr = config.sampleRate) {
   }
 
   let duration = signal.length / sr;
-  let start_at = selected_area ? 0.0 : (point_tag?.t || 0.0);
-  start_at -= config.timeMin;
+  let start_at = selected_area ? 0.0 : point_tag ? point_tag.t - config.timeMin : 0.0;
   await showStatus(['Playing sound:', duration.toFixed(2), 'sec'], { 'Stop': stopSound });
   let ctx = new AudioContext({ sampleRate: sr });
 
