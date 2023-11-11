@@ -38,9 +38,9 @@ export function $$$(tag_name, attrs = {}, content = []) {
 const is_spectrogram = (s) => s.rank == 3 && s.dimensions[2] == 2;
 
 export class Float32Tensor {
-  constructor(dims, array) {
+  constructor(dims, data) {
     let size = dims.reduce((p, d) => p * d, 1);
-    dcheck(!array || array.length == size);
+    dcheck(!data || data.length == size);
 
     // ds[i] = dims[i + 1] * dims[i + 2] * ...
     let dim = dims, ds = dim.slice(), n = ds.length;
@@ -49,7 +49,7 @@ export class Float32Tensor {
     for (let i = n - 2; i >= 0; i--)
       ds[i] = ds[i + 1] * dim[i + 1];
 
-    this.data = array || new Float32Array(size);
+    this.data = data || new Float32Array(size);
 
     this.rank = dims.length;
     this.dims = dims;
@@ -1364,7 +1364,11 @@ export async function ctcheck(ctoken) {
 }
 
 export function resampleSignal(src, res, p = 2) {
+  if (typeof res == 'number')
+    res = new Float32Array(res);
+
   let n = src.length, m = res.length;
+
   if (n == m) {
     res.set(src, 0);
     return;
@@ -1385,6 +1389,8 @@ export function resampleSignal(src, res, p = 2) {
         sum += src[i + k] * lanczos(k + i - t, p);
     res[j] = sum;
   }
+
+  return res;
 }
 
 async function reverseDiskMapping(src, res, { fs_full = false, r_zoom = 1, num_reps = 1, ctoken }) {

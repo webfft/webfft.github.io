@@ -16,6 +16,7 @@ let div_point = $('#point');
 let div_overlay = $('#overlay');
 let canvas_spectrum = $('#spectrum');
 let canvas_timeline = $('#timeline');
+let bgthread = null;
 let actions = [];
 let timer = 0;
 let config = {}, prev_config = {};
@@ -72,6 +73,7 @@ function init() {
   $('#reset').onclick = () => stopCurrentAction();
   toggleGridMode();
   initMouseHandlers();
+  initBgThread();
   initDebugGUI();
   let file_url = url_sp.get('a');
   if (file_url)
@@ -102,6 +104,35 @@ function initDebugGUI() {
   li.querySelector('.c').remove();
   let href = 'https://github.com/webfft/webfft.github.io/tree/master/dft#settings';
   li.querySelector('.property-name').innerHTML = `<a style="color:inherit" href="${href}">help</a>`;
+}
+
+function initBgThread() {
+  // bgthread = document.createElement('iframe');
+  // bgthread.src = 'bgthread.html';
+  // bgthread.style = 'visibility:hidden';
+  // document.body.appendChild(bgthread);
+  bgthread = new Worker('bgthread.js', { type: 'module' });
+  bgthread.messages = {};
+  bgthread.last_txid = 0;
+
+  bgthread.onmessage = async ({ data, origin, source }) => {
+    console.debug('bgthread.onmessage:', data);
+    // dcheck(origin == window.origin);
+    let { err, res, txid } = data;
+    if (!txid) return;
+    let msg = bgthread.messages[txid];
+    await utils.sleep(0);
+    err ? msg.reject(err) : msg.resolve(res);
+    delete bgthread.messages[data.txid];
+  };
+}
+
+async function bgInvoke(call, args) {
+  let txid = 'txid' + (++bgthread.last_txid);
+  bgthread.postMessage({ call, args, txid });
+  return new Promise((resolve, reject) => {
+    bgthread.messages[txid] = { resolve, reject };
+  });
 }
 
 function schedule(callback, args = []) {
@@ -193,8 +224,8 @@ async function resampleAudio() {
   let len = Math.floor(original_signal.length * config.sampleRate / original_sample_rate);
   if (audio_signal?.length == len) return;
   await showStatus('Resampling signal');
-  audio_signal = new Float32Array(len);
-  utils.resampleSignal(original_signal, audio_signal);
+  // audio_signal = utils.resampleSignal(original_signal, len);
+  audio_signal = await bgInvoke('resampleSignal', [original_signal, len]);
   await utils.hideStatus();
 }
 
@@ -205,6 +236,7 @@ async function decodeAudioFile() {
   initMinMaxSampleRate();
   await showStatus(['Decoding audio:', size_kb, 'KB @', sr, 'Hz']);
   original_signal = await utils.decodeAudioFile(audio_file, sr);
+  // original_signal = await bgInvoke('decodeAudioFile', [audio_file, sr]);
   original_sample_rate = sr;
   audio_signal = original_signal;
   if (!config.timeMin && !config.timeMax)
@@ -349,7 +381,9 @@ async function computeSpectrogram() {
   await resampleAudio();
   await showStatus(['Computing DFT:', time_span, 'sec @', num_frames, 'x', frame_size]);
   let audio_window = getAudioWindow();
-  spectrogram = await utils.computePaddedSpectrogram(audio_window, { num_frames, frame_size, frame_width });
+  // spectrogram = await utils.computePaddedSpectrogram(audio_window, { num_frames, frame_size, frame_width });
+  spectrogram = await bgInvoke('computePaddedSpectrogram', [audio_window, { num_frames, frame_size, frame_width }]);
+  spectrogram = new utils.Float32Tensor(spectrogram.dims, spectrogram.data);
 
   if (config.showPhase) {
     for (let i = 0; i < spectrogram.array.length; i += 2)
@@ -912,7 +946,7 @@ function stopCurrentAction() {
 function findMinMaxSampleRate() {
   let is_supported = (khz) => {
     try {
-      console.debug('Testing sample rate:', khz, 'kHz');
+      // console.debug('Testing sample rate:', khz, 'kHz');
       new AudioContext({ sampleRate: khz * 1000 }).close();
       return true;
     } catch (err) {
