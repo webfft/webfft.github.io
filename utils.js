@@ -347,7 +347,7 @@ export function applyBandpassFilter(signal, filter_fn) {
 }
 
 export async function drawSpectrogram(canvas, spectrogram, {
-  x2_mul = s => s, rgb_fn = s => [s * 9, s * 3, s * 1], sqrabs_max = 0, amp_pctile = 1.0, ctoken, num_reps = 2,
+  x2_mul = s => s, rgb_fn = s => [s * 4, s * 2, s * 1], sqrabs_max = 0, amp_pctile = 1.0, ctoken, num_reps = 2,
   r_zoom = 1, reim_fn = reim2, disk = false, highq = false, fs_full = false, clear = true, num_freqs = 0 } = {}) {
 
   let h = canvas.height;
@@ -453,26 +453,22 @@ export function getMaskedSpectrogram(spectrogram1, mask_fn) {
 }
 
 export function getSpectrogramMax(sg, reim_fn = reim2, amp_pctile = 1.0) {
-  let amp_max = getFrameMax(sg.array, reim_fn);
+  let a = sg.array;
+  let n = a.length / 2;
+  let q = new Float32Array(Math.min(1e4, n));
 
-  if (amp_pctile < 1.0) {
-    let buckets = new Int32Array(1e6);
-
-    aggFrameData(sg.array, reim_fn, (sum, amp) => {
-      let i = amp / amp_max * (buckets.length - 1) | 0;
-      buckets[i]++;
-      return 0;
-    });
-
-    // sum buckets[0..count] = total * amp_pctile
-    let total = sg.array.length / 2;
-    let index = 0, count = 0;
-    while (count / total < amp_pctile && index < total)
-      count += buckets[index++];
-    amp_max *= index / total;
+  for (let i = 0; i < q.length; i++) {
+    let j = Math.min(n - 1, Math.random() * n | 0);
+    let re = a[j * 2];
+    let im = a[j * 2 + 1];
+    q[i] = reim_fn(re, im);
   }
 
-  return amp_max;
+  q.sort();
+
+  let k = amp_pctile * q.length;
+  k = Math.min(Math.round(k), q.length - 1);
+  return q[k];
 }
 
 export function getFrameMax(data, reim_fn = reim2) {
@@ -1376,8 +1372,7 @@ export function resampleSignal(src, res, p = 2) {
 
   for (let j = 0; j < m; j++) {
     let t = j / m * n;
-    let i = Math.round(t);
-    dcheck(i >= 0 && i <= n - 1);
+    let i = Math.min(n - 1, Math.round(t));
     if (i == t) {
       res[j] = src[i];
       continue;
