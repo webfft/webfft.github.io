@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>WebFFT</title>
+  <link rel="stylesheet" href="index.css">
+  <script type="module" src="index.js"></script>
+  <script async src="/third_party/pako.js"></script>
+  <script async src="/third_party/UPNG.js"></script>
+</head>
+
+<body>
+  <canvas width="1024" height="1024"></canvas>
+  <div id="status">Initializing...</div>
+  <div id="buttons">
+    <button id="open_image" title="Open image"><img src="img/image.png"></button>
+    <button class="A" id="open_audio" title="Open audio"><img src="img/audio.png"></button>
+    <button class="Y" id="transpose" title="Transpose"><img src="img/rotate.png"></button>
+    <button class="Y" id="h_shift" title="Shift right"><img src="img/swap.png"></button>
+    <button id="fft_rows" title="Apply FFT to each row"><img src="img/deblur.png" style="transform:scaleX(-1)"></button>
+    <button id="inverse_fft" title="Inverse FFT on each row"><img src="img/deblur.png"></button>
+    <button class="G" id="save_png" title="Save PNG"><img src="img/png.png"></button>
+    <button class="G" id="save_exr" title="Save EXR"><img src="img/exr.png"></button>
+  </div>
+  <div id="hdr_control">
+    <svg viewBox="0 -3 5 6" xmlns="http://www.w3.org/2000/svg">
+      <line x1="0" y1="0" x2="5" y2="0" />
+      <circle r="0.3" cx="1.0" cy="0.0" />
+    </svg>
+    <div>RGB = 10<sup id="alpha">1.0</sup>&times;HDR<sup>1/<span id="gamma">1.0</span></sup></div>
+  </div>
+</body>
+
+</html>
