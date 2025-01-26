@@ -57,8 +57,8 @@ button {
   border-radius: 50%;
   border: 0.5em solid #444;
   overflow: hidden;
-  width: 8em;
-  height: 8em;
+  width: 6em;
+  height: 6em;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -78,8 +78,8 @@ button.G {
 }
 
 button img {
-  width: 4em;
-  height: 4em;
+  width: 3em;
+  height: 3em;
   opacity: 0.5;
   transition: 0.25s all;
 }
