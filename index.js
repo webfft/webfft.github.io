@@ -10,7 +10,7 @@ const TXID_STEP = 100;
 const MAX_CHANNELS = 3; // because those need to map to RGB eventually
 const IMAGE_SIZE = [1024, 1024];
 const AUDIO_SIZE = [1024, 2048];
-const SAMPLE_RATE = 24000; // 12 kHz is enough for audible sounds
+const SAMPLE_RATE = 48000;
 
 let bgThreads = []; // 3 total: one per channel
 let base_txid = 0;
