@@ -1,9 +1,18 @@
 A simple, but fast [webfft.js](lib/webfft.js) library based on the Cooley-Tukey DIF algorithm. Demo: [webfft.net](https://webfft.net).
 
-There is a basic UI that works with a 2048×1024 texture. It can apply per-row FFT, which can be paired with transposition to compute 2D FFT. Internally, the texture is kept in the float32 format, and with a basic gamma-correction it's mapped to RGB. The texture can be saved as:
+There is a basic UI that works with a 3-channel 1024×1024 float32 texture. The UI doesn't have a button to compute 2D FFT, but it provides a set of simpler transforms that can be chained together to make 2D FFT:
+
+  1. Apply the per-row FFT.
+  2. Transpose the texture.
+  3. Apply the per-row FFT again.
+  4. Transpose the texture again.
+
+The texture can be saved as:
 
   - PNG in the RGB×int16 format
   - EXR in the RGB×float32 format
+
+Heavy operations run on 3 background threads, one per texture channel.
 
 ### Images
 

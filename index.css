@@ -55,10 +55,10 @@ canvas {
 button {
   background: #400;
   border-radius: 50%;
-  border: 0.5em solid #444;
+  border: 0.25em solid #444;
   overflow: hidden;
-  width: 6em;
-  height: 6em;
+  width: 4em;
+  height: 4em;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -78,8 +78,8 @@ button.G {
 }
 
 button img {
-  width: 3em;
-  height: 3em;
+  width: 2em;
+  height: 2em;
   opacity: 0.5;
   transition: 0.25s all;
 }

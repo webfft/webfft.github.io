@@ -1,21 +1,19 @@
-import { conjugate, fft_rows, mul_const } from './lib/webfft_ext.js';
 import { createEXR } from './third_party/exr.js';
 
 const $ = (x) => document.querySelector(x);
-const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
-const assert = (x, m = 'assert() failed') => { if (!x) { debugger; throw new Error(m); } };
 
 const topCanvas = $('canvas');
 const elStatus = $('#status');
 
+const TXID_STEP = 100;
 const MAX_CHANNELS = 3; // because those need to map to RGB eventually
 const IMAGE_SIZE = [1024, 1024];
 const AUDIO_SIZE = [1024, 2048];
 
+let bgThreads = []; // 3 total: one per channel
+let base_txid = 0;
 let textureHDR = []; // 1..3 Float32Arrays of (re,im) pairs.
-let gamma = 1.0, brightness = 0.0; // HDR tone mapping: x -> A*pow(x,1.0/GAMMA)
-
-window.textureHDR = textureHDR; // for debugging
+let gamma = 2.0, brightness = 0.0; // HDR tone mapping: x -> A*pow(x,1.0/GAMMA)
 
 window.onerror = (event, source, lineno, colno, error) => setStatus(error, 'error');
 window.onunhandledrejection = (event) => setStatus(event.reason, 'error');
@@ -24,13 +22,14 @@ window.onload = () => init();
 function init() {
   $('#open_audio').onclick = () => openAudio();
   $('#open_image').onclick = () => openImage();
-  $('#fft_rows').onclick = () => applyFFT(+1);
-  $('#inverse_fft').onclick = () => applyFFT(-1);
+  $('#fft_rows').onclick = () => applyFFT();
+  $('#conjugate').onclick = () => conjugateIm();
   $('#transpose').onclick = () => transposeImage();
   $('#h_shift').onclick = () => shiftTexture();
   $('#save_png').onclick = () => savePNG();
   $('#save_exr').onclick = () => saveEXR();
   $('svg').onclick = (e) => setToneMapping(e);
+  initWorkerThreads();
   updateSVG();
   setStatus('Ready');
 }
@@ -49,7 +48,6 @@ async function openAudio() {
   let [w, h] = AUDIO_SIZE;
   topCanvas.width = w;
   topCanvas.height = h;
-  gamma = 3.5;
   updateSVG();
 
   if (channels.length > MAX_CHANNELS)
@@ -76,7 +74,6 @@ async function openImage() {
   let [w, h] = IMAGE_SIZE;
   topCanvas.width = w;
   topCanvas.height = h;
-  gamma = 1.0;
   updateSVG();
 
   setStatus('Decoding image file...');
@@ -104,6 +101,10 @@ function openFile(mime_type) {
 
 /// Image related utils.
 
+function getTextureHW() {
+  return [topCanvas.height, topCanvas.width];
+}
+
 function shiftTexture() {
   let h = topCanvas.height;
   let w = topCanvas.width;
@@ -120,6 +121,22 @@ function shiftTexture() {
   }
 
   drawTextureHDR();
+}
+
+// This can be done with WebGL.
+async function mapTextureToRGBA(rgba, max = 1.0, scale = 1.0, contrast = 1.0) {
+  let txid = base_txid;
+
+  let tasks = textureHDR.map(async (tex, ch) => {
+    let res = rgba.slice(0, tex.length / 2);
+    let args = [res, tex, max, scale, contrast];
+    res = await postThreadMessage(ch, txid + ch, mapTextureToRGBA.name, args, [res.buffer]);
+
+    for (let i = 0; i < res.length; i++)
+      rgba[i * 4 + ch] = res[i];
+  });
+
+  await Promise.all(tasks);
 }
 
 function setToneMapping(e) {
@@ -141,31 +158,16 @@ function updateSVG() {
   $('#gamma').textContent = gamma.toFixed(2);
 }
 
-function mapTextureToRGBA(rgba, max = 1.0, scale = 1.0, contrast = 1.0) {
-  let w = topCanvas.width;
-  let h = topCanvas.height;
-
-  for (let ch = 0; ch < 3 && ch < textureHDR.length; ch++) {
-    let tex = textureHDR[ch];
-    for (let i = 0; i < h * w; i++) {
-      let re = tex[i * 2];
-      let im = tex[i * 2 + 1];
-      let abs = Math.hypot(re, im);
-      if (contrast != 1.0)
-        abs = abs ** contrast;
-      rgba[i * 4 + ch] = max * clamp(scale * abs, 0, 1);
-    }
-  }
-}
-
-function drawTextureHDR() {
+async function drawTextureHDR() {
   setStatus('Drawing the texture...');
+  dropPendingTXIDs();
+
   let ts = Date.now();
   let ctx = topCanvas.getContext('2d');
   let w = topCanvas.width, h = topCanvas.height;
   let img = ctx.getImageData(0, 0, w, h);
   new Int32Array(img.data.buffer).fill(0xFF000000); // R,G,B,A = 0,0,0,1
-  mapTextureToRGBA(img.data, 0xFF, 10 ** brightness, 1.0 / gamma);
+  await mapTextureToRGBA(img.data, 0xFF, 10 ** brightness, 1.0 / gamma);
   ctx.putImageData(img, 0, 0);
   setStatus('drawTexture time: ' + (Date.now() - ts) + ' ms');
 }
@@ -214,8 +216,9 @@ function saveBlobAsFile(blob, name) {
   a.click();
 }
 
-function savePNG() {
+async function savePNG() {
   setStatus('Creating an RGB x int16 PNG image');
+  dropPendingTXIDs();
   let w = topCanvas.width;
   let h = topCanvas.height;
   let u16 = new Uint16Array(4 * h * w);
@@ -224,7 +227,7 @@ function savePNG() {
   for (let i = 0; i < h * w; i++)
     u16[i * 4 + 3] = 0xFFFF;
 
-  mapTextureToRGBA(u16, 0xFFFF, 10 ** brightness, 1.0 / gamma);
+  await mapTextureToRGBA(u16, 0xFFFF, 10 ** brightness, 1.0 / gamma);
 
   // big-endian for PNG
   let bswap = (b) => (b >> 8) | ((b & 255) << 8);
@@ -236,12 +239,13 @@ function savePNG() {
   saveBlobAsFile(blob, genImageName('png'));
 }
 
-function saveEXR() {
+async function saveEXR() {
   setStatus('Creating an RGB x float32 EXR image');
+  dropPendingTXIDs();
   let w = topCanvas.width;
   let h = topCanvas.height;
   let rgba = new Float32Array(w * h * 4);
-  mapTextureToRGBA(rgba, 1.0, 10 ** brightness, 1.0 / gamma);
+  await mapTextureToRGBA(rgba, 1.0, 10 ** brightness, 1.0 / gamma);
   let blob = createEXR(w, h, 3, rgba);
   saveBlobAsFile(blob, genImageName('exr'));
 }
@@ -263,28 +267,64 @@ async function decodeAudio(blob, sample_rate = 48000) {
   }
 }
 
-// FFT related utils
+/// FFT related utils
 
-function applyFFT(sign) {
-  let h = topCanvas.height;
-  let w = topCanvas.width;
+function conjugateIm() {
+  for (let tex of textureHDR)
+    for (let i = 0; i < tex.length / 2; i++)
+      tex[2 * i + 1] *= -1;
+  drawTextureHDR();
+}
 
-  setStatus('Computing FFT...');
-  let ts = Date.now();
+async function applyFFT() {
+  let txid = dropPendingTXIDs();
+  let [h, w] = getTextureHW();
 
-  for (let tex of textureHDR) {
-    if (sign < 0)
-      conjugate(tex);
+  let tasks = textureHDR.map(async (tex, ch) => {
+    let args = [tex, [h, w]];
+    let res = await postThreadMessage(ch, txid + ch, applyFFT.name, args);
+    tex.set(res);
+  });
 
-    fft_rows(tex, h, w);
+  await Promise.all(tasks);
+  drawTextureHDR();
+}
 
-    if (sign < 0) {
-      conjugate(tex);
-      mul_const(tex, 1 / w);
-    }
+/// Worker thread related utils
+
+function dropPendingTXIDs() {
+  return base_txid += TXID_STEP;
+}
+
+function initWorkerThreads() {
+  for (let ch = 0; ch < MAX_CHANNELS; ch++) {
+    let w = new Worker('thread.js', { type: 'module' });
+    w.onmessage = processThreadMessage;
+    w.promises = {};
+    bgThreads[ch] = w;
+  }
+}
+
+function postThreadMessage(ch, txid, fn, args, transfer) {
+  return new Promise((resolve, reject) => {
+    let ts = Date.now();
+    bgThreads[ch].promises[txid] = { resolve, reject };
+    bgThreads[ch].postMessage({ txid, ts, ch, fn, args }, transfer);
+  });
+}
+
+function processThreadMessage(message) {
+  let { txid, ch, ts, fn, res, err } = message.data;
+  console.debug('Message from bg thread', ch, fn, 'ts diff', Date.now() - ts, 'ms');
+
+  if (txid < base_txid) {
+    console.warn('Dropped outdated response: txid', txid, '<', base_txid);
+    return;
   }
 
-  console.log(h, 'x', w, 'FFT time:', Date.now() - ts, 'ms');
-  drawTextureHDR();
+  let promises = bgThreads[ch].promises;
+  let promise = promises[txid];
+  delete promises[txid];
+  promise.resolve(res);
 }
 
