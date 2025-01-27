@@ -1,4 +1,4 @@
-import { conjugate, fft_rows, mul_const } from './lib/webfft_ext.js';
+import { fft_rows, mul_const } from './lib/webfft_ext.js';
 
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 const assert = (x, m = 'assert() failed') => { if (!x) { debugger; throw new Error(m); } };

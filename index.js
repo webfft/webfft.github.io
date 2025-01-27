@@ -1,6 +1,7 @@
 import { createEXR } from './third_party/exr.js';
 
 const $ = (x) => document.querySelector(x);
+const assert = (x, m = 'assert() failed') => { if (!x) { debugger; throw new Error(m); } };
 
 const topCanvas = $('canvas');
 const elStatus = $('#status');
@@ -9,6 +10,7 @@ const TXID_STEP = 100;
 const MAX_CHANNELS = 3; // because those need to map to RGB eventually
 const IMAGE_SIZE = [1024, 1024];
 const AUDIO_SIZE = [1024, 2048];
+const SAMPLE_RATE = 24000; // 12 kHz is enough for audible sounds
 
 let bgThreads = []; // 3 total: one per channel
 let base_txid = 0;
@@ -58,13 +60,17 @@ async function openAudio() {
 
   textureHDR.length = 0;
   for (let ch = 0; ch < channels.length && ch < MAX_CHANNELS; ch++) {
-    let chn = channels[ch].length;
-    if (chn > h * w)
-      console.warn('Audio channel', ch, 'is longer than', h, 'x', w, '(' + chn + ')');
-    textureHDR[ch] = new Float32Array(h * w * 2);
-    let n = Math.min(chn, h * w);
-    for (let i = 0; i < n; i++)
-      textureHDR[ch][2 * i] = channels[ch][i];
+    let len = channels[ch].length;
+    let tex = new Float32Array(h * w * 2);
+    let step = (len - w) / h | 0;
+
+    assert((h - 1) * step + w - 1 < len);
+
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++)
+        tex[(y * w + x) * 2] = channels[ch][y * step + x];
+
+    textureHDR[ch] = tex;
   }
 
   drawTextureHDR();
@@ -255,9 +261,9 @@ async function saveEXR() {
 
 /// Audio related utils.
 
-async function decodeAudio(blob, sample_rate = 48000) {
+async function decodeAudio(blob) {
   let encoded_data = await blob.arrayBuffer();
-  let ctx = new AudioContext({ sampleRate: sample_rate });
+  let ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
   try {
     let cloned_data = encoded_data.slice(0);
     let audio_buffer = await ctx.decodeAudioData(cloned_data);
@@ -296,7 +302,6 @@ function applyGaussianWindow() {
 
   for (let x = 0; x < w; x++) {
     let dx = Math.min(x, w - x) / w * 2; // -1..1
-    dx *= 3; // 1/e^(dx*dx) = 0.001
     mask[x] = Math.exp(-dx * dx);
   }
 
