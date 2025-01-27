@@ -7,6 +7,12 @@ There is a basic UI that works with a 3-channel 1024×1024 float32 texture. The 
   3. Apply the per-row FFT again.
   4. Transpose the texture again.
 
+Inverse FFT can be done this way:
+
+  1. Conjugate: (re, im) -> (re, -im).
+  2. FFT.
+  3. Conjugate again.
+
 The texture can be saved as:
 
   - PNG in the RGB×int16 format

@@ -28,6 +28,8 @@ function init() {
   $('#h_shift').onclick = () => shiftTexture();
   $('#save_png').onclick = () => savePNG();
   $('#save_exr').onclick = () => saveEXR();
+  $('#abs_square').onclick = () => squareAbs();
+  $('#gaussian').onclick = () => applyGaussianWindow();
   $('svg').onclick = (e) => setToneMapping(e);
   initWorkerThreads();
   updateSVG();
@@ -42,13 +44,14 @@ function setStatus(text, type = '') {
 async function openAudio() {
   let file = await openFile('audio/*');
   if (!file) return;
-  setStatus('Decoding audio file...');
-  let channels = await decodeAudio(file);
 
   let [w, h] = AUDIO_SIZE;
   topCanvas.width = w;
   topCanvas.height = h;
   updateSVG();
+
+  setStatus('Decoding audio file...');
+  let channels = await decodeAudio(file);
 
   if (channels.length > MAX_CHANNELS)
     console.warn('Audio contains more than 3 channels:', channels.length);
@@ -273,6 +276,35 @@ function conjugateIm() {
   for (let tex of textureHDR)
     for (let i = 0; i < tex.length / 2; i++)
       tex[2 * i + 1] *= -1;
+  drawTextureHDR();
+}
+
+function squareAbs() {
+  for (let tex of textureHDR) {
+    for (let i = 0; i < tex.length / 2; i++) {
+      let re = tex[2 * i], im = tex[2 * i + 1];
+      tex[2 * i] = re * re + im * im;
+      tex[2 * i + 1] = 0;
+    }
+  }
+  drawTextureHDR();
+}
+
+function applyGaussianWindow() {
+  let [h, w] = getTextureHW();
+  let mask = new Float32Array(w);
+
+  for (let x = 0; x < w; x++) {
+    let dx = Math.min(x, w - x) / w * 2; // -1..1
+    dx *= 3; // 1/e^(dx*dx) = 0.001
+    mask[x] = Math.exp(-dx * dx);
+  }
+
+  for (let tex of textureHDR)
+    for (let y = 0; y < h; y++)
+      for (let i = 0; i < w * 2; i++)
+        tex[y * w * 2 + i] *= mask[i >> 1];
+
   drawTextureHDR();
 }
 
