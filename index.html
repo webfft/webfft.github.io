@@ -3,6 +3,7 @@
 
 <head>
   <title>WebFFT</title>
+  <meta http-equiv="content-type" content="text/html; charset=utf-8">
   <link rel="stylesheet" href="index.css">
   <script type="module" src="index.js"></script>
   <script async src="/third_party/pako.js"></script>
@@ -13,16 +14,27 @@
   <canvas width="1024" height="1024"></canvas>
   <div id="status">Initializing...</div>
   <div id="buttons">
-    <button id="open_image" title="Open image"><img src="img/image.png"></button>
-    <button class="A" id="open_audio" title="Open audio"><img src="img/audio.png"></button>
-    <button class="Y" id="transpose" title="Transpose"><img src="img/rotate.png"></button>
-    <button class="Y" id="h_shift" title="Shift right"><img src="img/swap.png"></button>
-    <button class="Y" id="conjugate" title="Conjugate"><img src="img/conj.png"></button>
-    <button id="fft_rows" title="Apply FFT to each row"><img src="img/deblur.png"></button>
-    <button id="abs_square" title="re^2+im^2"><img src="img/circle.png"></button>
-    <button id="gaussian" title="Gaussian window"><img src="img/gauss.png"></button>
-    <button class="G" id="save_png" title="Save PNG"><img src="img/png.png"></button>
-    <button class="G" id="save_exr" title="Save EXR"><img src="img/exr.png"></button>
+    <div>
+      <button class="G" id="rgb_to_yuv" title="RGB to YUV">RGB</button>
+      <button class="G" id="yuv_to_rgb" title="YUV to RGB">YUV</button>
+    </div>
+    <div>
+      <button class="Y" id="rect_to_disk" title="Map to polar coords"><img src="img/circle.png"></button>
+      <button class="Y" id="swap_reim" title="Swap re↔im">re↔im</button>
+      <button class="Y" id="h_shift" title="Shift right"><img src="img/swap.png"></button>
+      <button class="Y" id="transpose" title="Transpose"><img src="img/rotate.png"></button>
+    </div>
+    <div>
+      <button id="gaussian" title="Gaussian window"><img src="img/gauss.png"></button>
+      <button id="abs_square" title="re=re&sup2+im&sup2, im=0"><img src="img/z2.png"></button>
+      <button id="fft_rows" title="Apply FFT to each row">FFT</button>
+    </div>
+    <div>
+      <button class="G" id="save_exr" title="Save EXR"><img src="img/exr.png"></button>
+      <button class="G" id="save_png" title="Save PNG"><img src="img/png.png"></button>
+      <button class="A" id="open_audio" title="Open audio"><img src="img/audio.png"></button>
+      <button class="Y" id="open_image" title="Open image"><img src="img/image.png"></button>
+    </div>
   </div>
   <div id="hdr_control">
     <svg viewBox="0 -3 5 6" xmlns="http://www.w3.org/2000/svg">

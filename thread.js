@@ -8,7 +8,7 @@ self.onmessage = (e) => {
   let { txid, ch, ts, fn, args } = e.data;
   let res = null;
 
-  console.debug('Message from main thread', ch, fn, 'ts diff', Date.now() - ts, 'ms');
+  //console.debug('Message from main thread', ch, fn, 'ts diff', Date.now() - ts, 'ms');
   ts = Date.now();
 
   if (fn == applyFFT.name)
@@ -17,7 +17,10 @@ self.onmessage = (e) => {
   if (fn == mapTextureToRGBA.name)
     res = mapTextureToRGBA(...args);
 
-  console.debug(ch, fn, 'time:', Date.now() - ts, 'ms');
+  if (fn == mapRectToDisk.name)
+    res = mapRectToDisk(...args);
+
+  //console.debug(ch, fn, 'time:', Date.now() - ts, 'ms');
   ts = Date.now();
   self.postMessage({ txid, ts, ch, fn, res }, [res.buffer]);
 };
@@ -43,4 +46,27 @@ function applyFFT(tex, [h, w]) {
   return tex;
 }
 
+function mapRectToDisk(tex, [h, w]) {
+  assert(tex.length == h * w * 2);
+  let res = new Float32Array(h * w * 2);
 
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let dx = x + 0.5 - w / 2;
+      let dy = y + 0.5 - h / 2;
+      let r = Math.hypot(dx, dy);
+      let a = Math.atan2(dx, dy) / Math.PI; // -1..1
+      if (a < 0) a += 2, r *= -1;
+      let yy = Math.round(a * h) % h;
+      let xx = Math.round(w / 2 + r);
+
+      if (xx < 0 || xx >= w)
+        continue;
+
+      for (let ch = 0; ch < 2; ch++)
+        res[(y * w + x) * 2 + ch] = tex[(yy * w + xx) * 2 + ch];
+    }
+  }
+
+  return res;
+}

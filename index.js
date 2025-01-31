@@ -6,8 +6,11 @@ const assert = (x, m = 'assert() failed') => { if (!x) { debugger; throw new Err
 const topCanvas = $('canvas');
 const elStatus = $('#status');
 
+// https://en.wikipedia.org/wiki/Y%E2%80%B2UV
+const RGB_YUV = [1, 0, 1.13983, 1, -0.39465, -0.58060, 1, 2.03211, 0];
+const YUV_RGB = [0.299, 0.587, 0.114, -0.14713, -0.28886, 0.436, 0.615, -0.51499, -0.10001];
 const TXID_STEP = 100;
-const MAX_CHANNELS = 3; // because those need to map to RGB eventually
+const MAX_CHANNELS = 6; // 5.1 ch maps to RGB (re,im) channels
 const IMAGE_SIZE = [1024, 1024];
 const AUDIO_SIZE = [1024, 2048];
 const SAMPLE_RATE = 48000;
@@ -25,13 +28,16 @@ function init() {
   $('#open_audio').onclick = () => openAudio();
   $('#open_image').onclick = () => openImage();
   $('#fft_rows').onclick = () => applyFFT();
-  $('#conjugate').onclick = () => conjugateIm();
+  $('#swap_reim').onclick = () => swapReIm();
   $('#transpose').onclick = () => transposeImage();
   $('#h_shift').onclick = () => shiftTexture();
   $('#save_png').onclick = () => savePNG();
   $('#save_exr').onclick = () => saveEXR();
   $('#abs_square').onclick = () => squareAbs();
   $('#gaussian').onclick = () => applyGaussianWindow();
+  $('#yuv_to_rgb').onclick = () => changeColorSpace(YUV_RGB);
+  $('#rgb_to_yuv').onclick = () => changeColorSpace(RGB_YUV);
+  $('#rect_to_disk').onclick = () => mapRectToDisk();
   $('svg').onclick = (e) => setToneMapping(e);
   initWorkerThreads();
   updateSVG();
@@ -54,6 +60,7 @@ async function openAudio() {
 
   setStatus('Decoding audio file...');
   let channels = await decodeAudio(file);
+  console.log('Audio channels:', channels.length);
 
   if (channels.length > MAX_CHANNELS)
     console.warn('Audio contains more than 3 channels:', channels.length);
@@ -61,16 +68,17 @@ async function openAudio() {
   textureHDR.length = 0;
   for (let ch = 0; ch < channels.length && ch < MAX_CHANNELS; ch++) {
     let len = channels[ch].length;
-    let tex = new Float32Array(h * w * 2);
+    let tex_ch = ch / 2 | 0;
+    let tex = textureHDR[tex_ch] || new Float32Array(h * w * 2);
     let step = (len - w) / h | 0;
 
     assert((h - 1) * step + w - 1 < len);
 
     for (let y = 0; y < h; y++)
       for (let x = 0; x < w; x++)
-        tex[(y * w + x) * 2] = channels[ch][y * step + x];
+        tex[(y * w + x) * 2 + (ch % 2)] = channels[ch][y * step + x];
 
-    textureHDR[ch] = tex;
+    textureHDR[tex_ch] = tex;
   }
 
   drawTextureHDR();
@@ -110,6 +118,30 @@ function openFile(mime_type) {
 
 /// Image related utils.
 
+function changeColorSpace(matrix_3x3) {
+  let [m11, m12, m13, m21, m22, m23, m31, m32, m33] = matrix_3x3;
+  let [h, w] = getTextureHW(), hw2 = h * w * 2;
+
+  if (textureHDR.length == 0)
+    return;
+
+  for (let i = 0; i < 3; i++)
+    textureHDR[i] = textureHDR[i] || new Float32Array(hw2);
+
+  let [rr, gg, bb] = textureHDR;
+
+  setStatus('Changing color space...');
+
+  for (let i = 0; i < hw2; i++) {
+    let r = rr[i], g = gg[i], b = bb[i];
+    rr[i] = m11 * r + m12 * g + m13 * b;
+    gg[i] = m21 * r + m22 * g + m23 * b;
+    bb[i] = m31 * r + m32 * g + m33 * b;
+  }
+
+  drawTextureHDR();
+}
+
 function getTextureHW() {
   return [topCanvas.height, topCanvas.width];
 }
@@ -129,6 +161,21 @@ function shiftTexture() {
     }
   }
 
+  drawTextureHDR();
+}
+
+async function mapRectToDisk() {
+  let txid = base_txid;
+
+  setStatus('Mapping texture to polar coordinates...');
+  let tasks = textureHDR.map(async (tex, ch) => {
+    let [h, w] = getTextureHW();
+    let args = [tex, [h, w]];
+    let res = await postThreadMessage(ch, txid + ch, mapRectToDisk.name, args);
+    tex.set(res);
+  });
+
+  await Promise.all(tasks);
   drawTextureHDR();
 }
 
@@ -278,10 +325,14 @@ async function decodeAudio(blob) {
 
 /// FFT related utils
 
-function conjugateIm() {
+function swap(a, i, j) {
+  let x = a[i]; a[i] = a[j]; a[j] = x;
+}
+
+function swapReIm() {
   for (let tex of textureHDR)
     for (let i = 0; i < tex.length / 2; i++)
-      tex[2 * i + 1] *= -1;
+      swap(tex, 2 * i, 2 * i + 1);
   drawTextureHDR();
 }
 
@@ -301,7 +352,7 @@ function applyGaussianWindow() {
   let mask = new Float32Array(w);
 
   for (let x = 0; x < w; x++) {
-    let dx = Math.min(x, w - x) / w * 2; // -1..1
+    let dx = Math.abs(x + 0.5 - w / 2) / w * 2; // -1..1
     mask[x] = Math.exp(-dx * dx);
   }
 
@@ -352,7 +403,7 @@ function postThreadMessage(ch, txid, fn, args, transfer) {
 
 function processThreadMessage(message) {
   let { txid, ch, ts, fn, res, err } = message.data;
-  console.debug('Message from bg thread', ch, fn, 'ts diff', Date.now() - ts, 'ms');
+  //console.debug('Message from bg thread', ch, fn, 'ts diff', Date.now() - ts, 'ms');
 
   if (txid < base_txid) {
     console.warn('Dropped outdated response: txid', txid, '<', base_txid);

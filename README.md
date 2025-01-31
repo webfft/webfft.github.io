@@ -44,7 +44,7 @@ The texture can be saved as:
 
 ### Audio
 
-24 kHz audio is first loaded into an array of samples (aka the waveform) and then interpreted as a 2048×1024 texture. Each row in the texture becomes a 20ms audio frame. Then per-row FFT can be applied.
+48 kHz audio is first loaded into an array of samples (aka the waveform) and then interpreted as a 2048×1024 texture. The pair of stereo channels map to (re,im) components. Thus 5.1ch audio maps to the three RGB (re,im) channels. Each row in the texture becomes a 20ms audio frame. Then per-row FFT can be applied.
 
 Here is an example. Download a birdsong from [https://xeno-canto.org/927288](https://xeno-canto.org/927288) and apply the following steps:
 
@@ -68,6 +68,15 @@ Autocorrelation can be computed from this texture:
   5. Transpose.
 
 ![](img/scr/autocorr.jpg)
+
+Another option is to compute the [Radon transform](https://en.wikipedia.org/wiki/Radon_transform):
+
+  1. Map the FFT image to polar coordinates.
+  2. Apply the 2D FFT.
+
+![](/img/scr/radon1.jpg)
+
+![](/img/scr/radon2.jpg)
 
 ### License
 

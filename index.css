@@ -44,12 +44,23 @@ canvas {
 
 #buttons {
   position: fixed;
-  left: 0;
-  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: row;
+  gap: 0.25em;
+  padding: 0.5em;
+}
+
+#buttons > div {
   display: flex;
   flex-direction: column;
   gap: 0.5em;
-  padding: 0.5em;
+  justify-content: end;
+}
+
+#buttons > div:nth-child(2n+1) {
+  margin-bottom: 1.25em;
 }
 
 @media(orientation:portrait) {
@@ -61,7 +72,8 @@ canvas {
 button {
   background: #400;
   border-radius: 50%;
-  border: 0.25em solid #444;
+  border-color: transparent;
+  box-shadow: 0 0 1em #777;
   overflow: hidden;
   width: 4em;
   height: 4em;
@@ -69,6 +81,9 @@ button {
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  font-weight: bold;
+  color: #888;
+  transition: 0.25s all;
 }
 
 button.A {
@@ -87,11 +102,10 @@ button img {
   width: 2em;
   height: 2em;
   opacity: 0.5;
-  transition: 0.25s all;
 }
 
-button:hover img {
-  opacity: 1.0;
+button:hover {
+  box-shadow: 0 0 1em #ccc;
 }
 
 #hdr_control {
@@ -108,14 +122,17 @@ button:hover img {
 svg {
   width: 6em;
   height: 6em;
-  outline: 1.5px solid #444;
+  border-radius: 0.25em;
+  outline: 0.15em solid #444;
   cursor: pointer;
   transform: scaleY(-1);
   background: #000;
 }
 
 svg circle {
-  fill: #888;
+  fill: #ccc;
+  stroke: #888;
+  stroke-width: 0.003em;
 }
 
 svg line {
