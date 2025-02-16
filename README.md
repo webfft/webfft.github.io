@@ -1,5 +1,7 @@
 A simple, but fast [webfft.js](lib/webfft.js) library based on the Cooley-Tukey DIF algorithm. Demo: [webfft.net](https://webfft.net).
 
+![](webfft.svg)
+
 ### Images
 
 There is a basic UI that works with a 3-channel 1024×1024 float32 texture. Slow operations run on 3 background threads, one per texture channel.
